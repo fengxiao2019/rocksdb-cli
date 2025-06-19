@@ -1,0 +1,110 @@
+{
+  "project": {
+    "name": "rocksdb-cli",
+    "description": "An interactive RocksDB command-line tool with column family support",
+    "language": "go",
+    "type": "cli"
+  },
+  "conventions": {
+    "code_style": {
+      "format": "gofmt",
+      "line_length": 100,
+      "indent": {
+        "style": "spaces",
+        "size": 2
+      }
+    },
+    "naming": {
+      "files": "snake_case",
+      "functions": "PascalCase",
+      "variables": "camelCase",
+      "constants": "PascalCase",
+      "interfaces": "PascalCase",
+      "test_files": "*_test.go"
+    }
+  },
+  "dependencies": {
+    "required": {
+      "system": [
+        "rocksdb",
+        "snappy",
+        "lz4",
+        "zstd",
+        "bzip2"
+      ],
+      "environment": {
+        "CGO_CFLAGS": "-I/opt/homebrew/Cellar/rocksdb/*/include",
+        "CGO_LDFLAGS": "-L/opt/homebrew/Cellar/rocksdb/*/lib -L/opt/homebrew/lib -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd"
+      }
+    }
+  },
+  "structure": {
+    "main": "cmd/main.go",
+    "packages": {
+      "internal/db": "RocksDB wrapper and database operations",
+      "internal/command": "Command parsing and execution",
+      "internal/repl": "Interactive CLI implementation",
+      "scripts": "Helper scripts and tools"
+    }
+  },
+  "commands": {
+    "build": "go build ./...",
+    "test": "go test ./...",
+    "generate_testdb": "go run scripts/gen_testdb.go ./testdb"
+  },
+  "features": {
+    "column_families": {
+      "default": "default",
+      "operations": ["create", "drop", "list", "use"],
+      "commands": ["get", "put", "prefix"]
+    },
+    "json_support": {
+      "pretty_print": {
+        "flag": "--pretty",
+        "applicable_commands": ["get"]
+      }
+    }
+  },
+  "testing": {
+    "coverage": {
+      "required": true,
+      "minimum": 80
+    },
+    "patterns": {
+      "unit_tests": "*_test.go",
+      "test_data": "testdb/"
+    }
+  },
+  "documentation": {
+    "main": "README.md",
+    "command_format": {
+      "get": "get [<cf>] <key> [--pretty]",
+      "put": "put [<cf>] <key> <value>",
+      "prefix": "prefix [<cf>] <prefix>",
+      "createcf": "createcf <cf>",
+      "dropcf": "dropcf <cf>",
+      "listcf": "listcf",
+      "usecf": "usecf <cf>"
+    }
+  },
+  "linting": {
+    "tools": ["golangci-lint"],
+    "rules": {
+      "max_function_lines": 50,
+      "require_error_check": true,
+      "require_test_comments": true
+    }
+  },
+  "git": {
+    "commit_message": {
+      "format": "type: subject",
+      "types": ["feat", "fix", "docs", "style", "refactor", "test", "chore"],
+      "max_length": 72
+    },
+    "ignore_patterns": [
+      "testdb/",
+      "*.log",
+      ".DS_Store"
+    ]
+  }
+} 
