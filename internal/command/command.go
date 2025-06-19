@@ -1,6 +1,7 @@
 package command
 
 import (
+	"encoding/json"
 	"fmt"
 	"rocksdb-cli/internal/db"
 	"strings"
@@ -13,6 +14,18 @@ type ReplState struct {
 type Handler struct {
 	DB    db.KeyValueDB
 	State interface{} // *ReplState, used to manage the active column family
+}
+
+func prettyPrintJSON(val string) string {
+	var jsonData interface{}
+	if err := json.Unmarshal([]byte(val), &jsonData); err != nil {
+		return val // If not valid JSON, return as is
+	}
+	prettyJSON, err := json.MarshalIndent(jsonData, "", "  ")
+	if err != nil {
+		return val // If can't pretty print, return as is
+	}
+	return string(prettyJSON)
 }
 
 func (h *Handler) Execute(input string) bool {
@@ -36,37 +49,67 @@ func (h *Handler) Execute(input string) bool {
 		}
 		return true
 	case "get":
-		cf, key := "", ""
-		if len(parts) == 2 && h.State != nil {
-			if s, ok := h.State.(*ReplState); ok {
+		cf, key, pretty := "", "", false
+		switch len(parts) {
+		case 2: // get <key>
+			if s, ok := h.State.(*ReplState); ok && s != nil {
 				cf = s.CurrentCF
 				key = parts[1]
+			} else {
+				fmt.Println("No current column family set")
+				return true
 			}
-		} else if len(parts) == 3 {
+		case 3:
+			if parts[2] == "--pretty" { // get <key> --pretty
+				if s, ok := h.State.(*ReplState); ok && s != nil {
+					cf = s.CurrentCF
+					key = parts[1]
+					pretty = true
+				} else {
+					fmt.Println("No current column family set")
+					return true
+				}
+			} else { // get <cf> <key>
+				cf = parts[1]
+				key = parts[2]
+			}
+		case 4: // get <cf> <key> --pretty
+			if parts[3] != "--pretty" {
+				fmt.Println("Usage: get [<cf>] <key> [--pretty]")
+				return true
+			}
 			cf = parts[1]
 			key = parts[2]
-		} else {
-			fmt.Println("Usage: get [<cf>] <key>")
+			pretty = true
+		default:
+			fmt.Println("Usage: get [<cf>] <key> [--pretty]")
 			return true
 		}
 		val, err := h.DB.GetCF(cf, key)
 		if err != nil {
 			fmt.Printf("Query failed: %v\n", err)
 		} else {
-			fmt.Printf("%s\n", val)
+			if pretty {
+				fmt.Printf("%s\n", prettyPrintJSON(val))
+			} else {
+				fmt.Printf("%s\n", val)
+			}
 		}
 	case "put":
 		cf, key, value := "", "", ""
-		if len(parts) >= 3 && h.State != nil {
-			if s, ok := h.State.(*ReplState); ok {
+		if len(parts) == 3 { // put <key> <value>
+			if s, ok := h.State.(*ReplState); ok && s != nil {
 				cf = s.CurrentCF
 				key = parts[1]
-				value = strings.Join(parts[2:], " ")
+				value = parts[2]
+			} else {
+				fmt.Println("No current column family set")
+				return true
 			}
-		} else if len(parts) >= 4 {
+		} else if len(parts) == 4 { // put <cf> <key> <value>
 			cf = parts[1]
 			key = parts[2]
-			value = strings.Join(parts[3:], " ")
+			value = parts[3]
 		} else {
 			fmt.Println("Usage: put [<cf>] <key> <value>")
 			return true

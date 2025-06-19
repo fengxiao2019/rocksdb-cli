@@ -8,6 +8,7 @@ An interactive RocksDB command-line tool written in Go, with support for multipl
 - Query by prefix
 - Insert/Update key-value pairs
 - Multiple column family (CF) management and operations
+- JSON pretty print support for values
 - Clear structure, easy to maintain and extend
 
 ## Project Structure
@@ -69,23 +70,58 @@ go test ./...
 1. Run: `go run cmd/main.go --db /path/to/rocksdb`
 2. Enter commands in REPL:
 
-### Basic Commands (All require column family specification)
-- `get <cf> <key>`         Query key in CF
-- `put <cf> <key> <value>` Insert/Update key-value in CF
-- `prefix <cf> <prefix>`   Query by prefix in CF
-- `listcf`                 List all column families
-- `createcf <cf>`          Create new column family
-- `dropcf <cf>`            Drop column family
-- `exit` or `quit`         Exit
+### Basic Commands
+There are two ways to use commands:
 
-### Examples
+1. Set current CF and use simplified commands:
 ```
-listcf
-createcf mycf
-put mycf hello world
-get mycf hello
-prefix mycf h
+usecf mycf       # Set current CF
+get key          # Use current CF
+put key value    # Use current CF
+prefix pre       # Use current CF
 ```
+
+2. Explicitly specify CF in commands:
+```
+get mycf key
+put mycf key value
+prefix mycf pre
+```
+
+### Command Reference
+- `usecf <cf>`                   Switch to a column family
+- `get [<cf>] <key> [--pretty]`  Query key in CF, with optional JSON pretty print
+- `put [<cf>] <key> <value>`     Insert/Update key-value in CF
+- `prefix [<cf>] <prefix>`       Query by prefix in CF
+- `listcf`                       List all column families
+- `createcf <cf>`                Create new column family
+- `dropcf <cf>`                  Drop column family
+- `exit` or `quit`               Exit
+
+### JSON Pretty Print
+When retrieving values that are JSON formatted, you can use the `--pretty` flag with the `get` command to format the output:
+
+```
+# Store a JSON value
+put mycf user1 {"name":"John","age":30,"hobbies":["reading","coding"]}
+
+# Regular get (single line)
+get mycf user1
+{"name":"John","age":30,"hobbies":["reading","coding"]}
+
+# Pretty printed get
+get mycf user1 --pretty
+{
+  "name": "John",
+  "age": 30,
+  "hobbies": [
+    "reading",
+    "coding"
+  ]
+}
+```
+
+If the value is not valid JSON, it will be displayed as is.
 
 ## Complete Solution
 
