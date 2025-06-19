@@ -93,6 +93,7 @@ prefix mycf pre
 - `get [<cf>] <key> [--pretty]`  Query key in CF, with optional JSON pretty print
 - `put [<cf>] <key> <value>`     Insert/Update key-value in CF
 - `prefix [<cf>] <prefix>`       Query by prefix in CF
+- `scan [<cf>] [start] [end] [options]` Scan range of keys in CF with advanced options
 - `listcf`                       List all column families
 - `createcf <cf>`                Create new column family
 - `dropcf <cf>`                  Drop column family
@@ -123,67 +124,85 @@ get mycf user1 --pretty
 
 If the value is not valid JSON, it will be displayed as is.
 
-## Complete Solution
+### Range Scanning
+The `scan` command provides powerful range scanning capabilities with various options:
 
-### 1. **Ensure testdb is created with column family**
+```
+# Basic range scan (forward)
+scan key1 key5              # Scan from key1 to key5 (exclusive)
 
-Your original `gen_testdb.go` script used `grocksdb.OpenDb` (single CF), not `OpenDbColumnFamilies` (multiple CF).  
-This will cause OpenWithCFs to open, even though there's a default CF name, there's no default CF handle.
+# Scan with explicit column family
+scan mycf key1 key5         # Scan in specific column family
 
-### 2. **Correct testdb generation script**
+# Reverse scan
+scan key1 key5 --reverse    # Scan backwards from key5 to key1
 
-Please change `scripts/gen_testdb.go` to use `OpenDbColumnFamilies` to create and write to default CF:
+# Scan with limit
+scan key1 key5 --limit=10   # Return at most 10 results
 
-```go
-package main
+# Scan without values (keys only)
+scan key1 key5 --values=no  # Return only keys, not values
 
-import (
-	"fmt"
-	"os"
-	"github.com/linxGnu/grocksdb"
-)
+# Scan from start to end of database
+scan key1                   # Scan from key1 to end
 
-func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("用法: gen_testdb <db_path>")
-		os.Exit(1)
-	}
-	dbPath := os.Args[1]
-	opts := grocksdb.NewDefaultOptions()
-	opts.SetCreateIfMissing(true)
-	opts.SetCreateIfMissingColumnFamilies(true)
-	cfNames := []string{"default"}
-	cfOpts := []*grocksdb.Options{grocksdb.NewDefaultOptions()}
-	db, cfHandles, err := grocksdb.OpenDbColumnFamilies(opts, dbPath, cfNames, cfOpts)
-	if err != nil {
-		panic(err)
-	}
-	wo := grocksdb.NewDefaultWriteOptions()
-	defer db.Close()
-	defer wo.Destroy()
-
-	kvs := map[string]string{
-		"foo": "bar",
-		"foo2": "baz",
-		"fop": "zzz",
-		"hello": "world",
-		"prefix1": "v1",
-		"prefix2": "v2",
-	}
-	for k, v := range kvs {
-		err := db.PutCF(wo, cfHandles[0], []byte(k), []byte(v))
-		if err != nil {
-			fmt.Printf("写入 %s 失败: %v\n", k, err)
-		}
-	}
-	fmt.Println("testdb 生成完毕:", dbPath)
-}
+# Combined options
+scan mycf key1 key5 --reverse --limit=5 --values=no
 ```
 
-### 3. **Regenerate testdb and test**
+**Scan Options:**
+- `--reverse`: Scan in reverse order (from end to start)
+- `--limit=N`: Limit results to N entries
+- `--values=no`: Return only keys without values
+
+**Range Behavior:**
+- Forward scan: includes start key, excludes end key `[start, end)`
+- Reverse scan: starts just before end key, goes backwards to start key
+- If no end key provided, scans to the end/beginning of the database
+
+## Generate Test Database
+
+The included `gen_testdb.go` script creates a comprehensive test database with multiple column families and sample data:
 
 ```sh
+# Generate test database
 go run scripts/gen_testdb.go ./testdb
+
+# Start the CLI with the test database
 go run cmd/main.go --db ./testdb
-# Then usecf default, get foo should return data
+```
+
+The test database includes:
+- **default**: Basic key-value pairs and configuration data
+- **users**: User profiles in JSON format with different roles
+- **products**: Product information including electronics and groceries
+- **logs**: Application logs with different severity levels and metrics
+
+### Example Usage with Test Data
+
+```sh
+# List all column families
+> listcf
+
+# Switch to users column family
+> usecf users
+
+# Get all users with prefix
+> prefix user:
+
+# Scan range of users
+> scan user:1001 user:1005
+
+# Get user details with pretty JSON formatting
+> get user:1001 --pretty
+
+# Switch to products and explore
+> usecf products
+> prefix prod:
+> scan sku:ABC123 sku:GHI789 --reverse
+
+# View logs with different filters
+> usecf logs
+> prefix error:
+> scan 2024-01-01T10:00:00 2024-01-01T10:05:00 --limit=3
 ``` 

@@ -39,6 +39,7 @@ func completer(d prompt.Document) []prompt.Suggest {
 		{Text: "get", Description: "get [<cf>] <key> Query by CF"},
 		{Text: "put", Description: "put [<cf>] <key> <value> Insert/Update"},
 		{Text: "prefix", Description: "prefix [<cf>] <prefix> Query by CF prefix"},
+		{Text: "scan", Description: "scan [<cf>] [start] [end] Scan range with options"},
 		{Text: "listcf", Description: "List all column families"},
 		{Text: "createcf", Description: "createcf <cf> Create new column family"},
 		{Text: "dropcf", Description: "dropcf <cf> Drop column family"},

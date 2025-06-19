@@ -116,6 +116,87 @@ func TestDB_ColumnFamilies(t *testing.T) {
 	}
 }
 
+func TestDB_Scan(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "testdb")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer db.Close()
+
+	// Setup test data
+	testData := map[string]string{
+		"key1": "value1",
+		"key2": "value2",
+		"key3": "value3",
+		"key4": "value4",
+		"key5": "value5",
+	}
+
+	for k, v := range testData {
+		if err := db.PutCF("default", k, v); err != nil {
+			t.Fatalf("PutCF failed: %v", err)
+		}
+	}
+
+	// Test forward scan with no end key
+	result, err := db.ScanCF("default", []byte("key2"), nil, ScanOptions{Values: true})
+	if err != nil {
+		t.Fatalf("ScanCF failed: %v", err)
+	}
+	if len(result) != 4 {
+		t.Errorf("Forward scan result count = %d, want 4", len(result))
+	}
+	if v, ok := result["key2"]; !ok || v != "value2" {
+		t.Errorf("Forward scan result missing or wrong value for key2: got %v", v)
+	}
+	if v, ok := result["key5"]; !ok || v != "value5" {
+		t.Errorf("Forward scan result missing or wrong value for key5: got %v", v)
+	}
+
+	// Test reverse scan with end key
+	result, err = db.ScanCF("default", []byte("key2"), []byte("key4"), ScanOptions{Reverse: true, Values: true})
+	if err != nil {
+		t.Fatalf("ScanCF failed: %v", err)
+	}
+	if len(result) != 2 {
+		t.Errorf("Reverse scan result count = %d, want 2", len(result))
+	}
+	if v, ok := result["key3"]; !ok || v != "value3" {
+		t.Errorf("Reverse scan result missing or wrong value for key3: got %v", v)
+	}
+	if v, ok := result["key2"]; !ok || v != "value2" {
+		t.Errorf("Reverse scan result missing or wrong value for key2: got %v", v)
+	}
+
+	// Test scan with limit
+	result, err = db.ScanCF("default", []byte("key1"), nil, ScanOptions{Limit: 2})
+	if err != nil {
+		t.Fatalf("ScanCF failed: %v", err)
+	}
+	if len(result) != 2 {
+		t.Errorf("Scan with limit result count = %d, want 2", len(result))
+	}
+
+	// Test scan without values
+	result, err = db.ScanCF("default", []byte("key1"), nil, ScanOptions{Values: false})
+	if err != nil {
+		t.Fatalf("ScanCF failed: %v", err)
+	}
+	for _, v := range result {
+		if v != "" {
+			t.Errorf("Scan without values should return empty values, got %v", v)
+		}
+	}
+
+	// Test scan on non-existent CF
+	_, err = db.ScanCF("nonexistent", []byte("key1"), nil, ScanOptions{})
+	if err == nil {
+		t.Error("ScanCF on nonexistent CF should fail")
+	}
+}
+
 func contains(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {

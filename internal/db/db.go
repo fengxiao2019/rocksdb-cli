@@ -6,10 +6,17 @@ import (
 	"github.com/linxGnu/grocksdb"
 )
 
+type ScanOptions struct {
+	Limit   int
+	Reverse bool
+	Values  bool
+}
+
 type KeyValueDB interface {
 	GetCF(cf, key string) (string, error)
 	PutCF(cf, key, value string) error
 	PrefixScanCF(cf, prefix string, limit int) (map[string]string, error)
+	ScanCF(cf string, start, end []byte, opts ScanOptions) (map[string]string, error)
 	ListCFs() ([]string, error)
 	CreateCF(cf string) error
 	DropCF(cf string) error
@@ -107,6 +114,94 @@ func (d *DB) PrefixScanCF(cf, prefix string, limit int) (map[string]string, erro
 			break
 		}
 	}
+	return result, nil
+}
+
+func (d *DB) ScanCF(cf string, start, end []byte, opts ScanOptions) (map[string]string, error) {
+	h, ok := d.cfHandles[cf]
+	if !ok {
+		return nil, errors.New("column family not found")
+	}
+
+	it := d.db.NewIteratorCF(d.ro, h)
+	defer it.Close()
+
+	result := make(map[string]string)
+	startStr := string(start)
+	endStr := string(end)
+
+	// Position iterator based on direction and bounds
+	if opts.Reverse {
+		// For reverse scan, we start from end and go backwards to start
+		if len(end) > 0 {
+			it.SeekForPrev(end)
+		} else {
+			it.SeekToLast()
+		}
+	} else {
+		// For forward scan, we start from start and go forwards to end
+		if len(start) > 0 {
+			it.Seek(start)
+		} else {
+			it.SeekToFirst()
+		}
+	}
+
+	// Iterate over the range
+	for it.Valid() {
+		k := it.Key()
+		kStr := string(k.Data())
+
+		// Check bounds based on direction
+		if opts.Reverse {
+			// For reverse scan: stop when we reach below start
+			if len(start) > 0 && kStr < startStr {
+				k.Free()
+				break
+			}
+			// For reverse scan: skip if we're at or above end
+			if len(end) > 0 && kStr >= endStr {
+				k.Free()
+				it.Prev()
+				continue
+			}
+		} else {
+			// For forward scan: stop when we reach end
+			if len(end) > 0 && kStr >= endStr {
+				k.Free()
+				break
+			}
+			// For forward scan: skip if we're below start
+			if len(start) > 0 && kStr < startStr {
+				k.Free()
+				it.Next()
+				continue
+			}
+		}
+
+		// Store key-value pair
+		if opts.Values {
+			v := it.Value()
+			result[kStr] = string(v.Data())
+			v.Free()
+		} else {
+			result[kStr] = ""
+		}
+		k.Free()
+
+		// Check limit
+		if opts.Limit > 0 && len(result) >= opts.Limit {
+			break
+		}
+
+		// Move iterator
+		if opts.Reverse {
+			it.Prev()
+		} else {
+			it.Next()
+		}
+	}
+
 	return result, nil
 }
 

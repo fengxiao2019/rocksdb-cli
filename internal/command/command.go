@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"rocksdb-cli/internal/db"
+	"strconv"
 	"strings"
 )
 
@@ -28,6 +29,27 @@ func prettyPrintJSON(val string) string {
 	return string(prettyJSON)
 }
 
+func parseFlags(args []string) (map[string]string, []string) {
+	flags := make(map[string]string)
+	var nonFlags []string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if strings.HasPrefix(arg, "--") {
+			parts := strings.SplitN(arg[2:], "=", 2)
+			if len(parts) == 2 {
+				flags[parts[0]] = parts[1]
+			} else {
+				flags[parts[0]] = "true"
+			}
+		} else {
+			nonFlags = append(nonFlags, arg)
+		}
+	}
+
+	return flags, nonFlags
+}
+
 func (h *Handler) Execute(input string) bool {
 	input = strings.TrimSpace(input)
 	if input == "" {
@@ -48,6 +70,73 @@ func (h *Handler) Execute(input string) bool {
 			}
 		}
 		return true
+	case "scan":
+		flags, args := parseFlags(parts[1:])
+		cf := ""
+		var start, end []byte
+
+		// Parse column family and range
+		switch len(args) {
+		case 1: // scan <start>
+			if s, ok := h.State.(*ReplState); ok && s != nil {
+				cf = s.CurrentCF
+				start = []byte(args[0])
+			} else {
+				fmt.Println("No current column family set")
+				return true
+			}
+		case 2: // scan <start> <end> or scan <cf> <start>
+			if s, ok := h.State.(*ReplState); ok && s != nil {
+				cf = s.CurrentCF
+				start = []byte(args[0])
+				end = []byte(args[1])
+			} else {
+				cf = args[0]
+				start = []byte(args[1])
+			}
+		case 3: // scan <cf> <start> <end>
+			cf = args[0]
+			start = []byte(args[1])
+			end = []byte(args[2])
+		default:
+			fmt.Println("Usage: scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no]")
+			return true
+		}
+
+		// Parse options
+		opts := db.ScanOptions{
+			Values: true, // Default to showing values
+		}
+
+		if limit, ok := flags["limit"]; ok {
+			if n, err := strconv.Atoi(limit); err == nil && n > 0 {
+				opts.Limit = n
+			} else {
+				fmt.Println("Invalid limit value")
+				return true
+			}
+		}
+
+		if _, ok := flags["reverse"]; ok {
+			opts.Reverse = true
+		}
+
+		if val, ok := flags["values"]; ok && val == "no" {
+			opts.Values = false
+		}
+
+		result, err := h.DB.ScanCF(cf, start, end, opts)
+		if err != nil {
+			fmt.Printf("Scan failed: %v\n", err)
+		} else {
+			for k, v := range result {
+				if opts.Values {
+					fmt.Printf("%s: %s\n", k, v)
+				} else {
+					fmt.Printf("%s\n", k)
+				}
+			}
+		}
 	case "get":
 		cf, key, pretty := "", "", false
 		switch len(parts) {
