@@ -1,7 +1,9 @@
 package db
 
 import (
+	"encoding/csv"
 	"errors"
+	"os"
 
 	"github.com/linxGnu/grocksdb"
 )
@@ -17,6 +19,7 @@ type KeyValueDB interface {
 	PutCF(cf, key, value string) error
 	PrefixScanCF(cf, prefix string, limit int) (map[string]string, error)
 	ScanCF(cf string, start, end []byte, opts ScanOptions) (map[string]string, error)
+	ExportToCSV(cf, filePath string) error
 	ListCFs() ([]string, error)
 	CreateCF(cf string) error
 	DropCF(cf string) error
@@ -229,6 +232,48 @@ func (d *DB) DropCF(cf string) error {
 	}
 	h.Destroy()
 	delete(d.cfHandles, cf)
+	return nil
+}
+
+func (d *DB) ExportToCSV(cf, filePath string) error {
+	h, ok := d.cfHandles[cf]
+	if !ok {
+		return errors.New("column family not found")
+	}
+
+	file, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+	defer writer.Flush()
+
+	// Write CSV header
+	err = writer.Write([]string{"Key", "Value"})
+	if err != nil {
+		return err
+	}
+
+	it := d.db.NewIteratorCF(d.ro, h)
+	defer it.Close()
+
+	for it.SeekToFirst(); it.Valid(); it.Next() {
+		k := it.Key()
+		v := it.Value()
+
+		err := writer.Write([]string{string(k.Data()), string(v.Data())})
+		if err != nil {
+			k.Free()
+			v.Free()
+			return err
+		}
+
+		k.Free()
+		v.Free()
+	}
+
 	return nil
 }
 

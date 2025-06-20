@@ -151,6 +151,16 @@ func (m *mockDB) DropCF(cf string) error {
 	return nil
 }
 
+func (m *mockDB) ExportToCSV(cf, filePath string) error {
+	if !m.cfExists[cf] {
+		return errors.New("column family not found")
+	}
+
+	// For testing, we'll just simulate the export without actually creating a file
+	// In a real test environment, you might want to create a temporary file
+	return nil
+}
+
 func (m *mockDB) Close() {}
 
 func TestHandler_Execute(t *testing.T) {
@@ -409,6 +419,36 @@ func TestHandler_Execute(t *testing.T) {
 						return errors.New("scan without values returned values")
 					}
 				}
+				return nil
+			},
+		},
+		{
+			name: "export with current cf",
+			cmd:  "export test_export.csv",
+			setupFunc: func() {
+				state.CurrentCF = "default"
+				mockDB.PutCF("default", "export_key1", "export_value1")
+				mockDB.PutCF("default", "export_key2", "export_value2")
+			},
+			checkFunc: func() error {
+				// Since we're using mockDB, we just check that the method was called without error
+				return nil
+			},
+		},
+		{
+			name: "export with explicit cf",
+			cmd:  "export default test_export2.csv",
+			checkFunc: func() error {
+				// Since we're using mockDB, we just check that the method was called without error
+				return nil
+			},
+		},
+		{
+			name:        "export nonexistent cf should fail",
+			cmd:         "export nonexistent test_export3.csv",
+			expectError: true,
+			checkFunc: func() error {
+				// The command should handle the error gracefully
 				return nil
 			},
 		},

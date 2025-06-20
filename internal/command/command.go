@@ -263,6 +263,33 @@ func (h *Handler) Execute(input string) bool {
 		} else {
 			fmt.Println("OK")
 		}
+	case "export":
+		cf, filePath := "", ""
+		if len(parts) == 2 && h.State != nil {
+			// export <file_path> - use current CF
+			if s, ok := h.State.(*ReplState); ok && s != nil {
+				cf = s.CurrentCF
+				filePath = parts[1]
+			} else {
+				fmt.Println("No current column family set")
+				return true
+			}
+		} else if len(parts) == 3 {
+			// export <cf> <file_path>
+			cf = parts[1]
+			filePath = parts[2]
+		} else {
+			fmt.Println("Usage: export [<cf>] <file_path>")
+			fmt.Println("  Export column family data to CSV file")
+			return true
+		}
+
+		err := h.DB.ExportToCSV(cf, filePath)
+		if err != nil {
+			fmt.Printf("Export failed: %v\n", err)
+		} else {
+			fmt.Printf("Successfully exported column family '%s' to '%s'\n", cf, filePath)
+		}
 	case "exit", "quit":
 		return false
 	default:

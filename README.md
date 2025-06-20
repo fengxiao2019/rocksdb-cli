@@ -67,8 +67,27 @@ go test ./...
 - Linker warnings about duplicate libraries can be ignored, they don't affect functionality.
 
 ## Usage
+
+### Interactive Mode
 1. Run: `go run cmd/main.go --db /path/to/rocksdb`
 2. Enter commands in REPL:
+
+### CSV Export Mode
+You can also export any column family to a CSV file directly from the command line:
+
+```sh
+# Export specific column family to CSV file
+rocksdb-cli --db /path/to/rocksdb --export-cf <column_family> --export-file <output.csv>
+
+# Examples
+rocksdb-cli --db ./testdb --export-cf users --export-file users.csv
+rocksdb-cli --db ./testdb --export-cf products --export-file products.csv
+```
+
+The CSV export includes:
+- Header row with "Key" and "Value" columns
+- All key-value pairs from the specified column family
+- Proper CSV escaping for special characters in JSON values
 
 ### Basic Commands
 There are two ways to use commands:
@@ -89,15 +108,23 @@ prefix mycf pre
 ```
 
 ### Command Reference
+
+#### Interactive Commands
 - `usecf <cf>`                   Switch to a column family
 - `get [<cf>] <key> [--pretty]`  Query key in CF, with optional JSON pretty print
 - `put [<cf>] <key> <value>`     Insert/Update key-value in CF
 - `prefix [<cf>] <prefix>`       Query by prefix in CF
 - `scan [<cf>] [start] [end] [options]` Scan range of keys in CF with advanced options
+- `export [<cf>] <file_path>`    Export column family data to CSV file
 - `listcf`                       List all column families
 - `createcf <cf>`                Create new column family
 - `dropcf <cf>`                  Drop column family
 - `exit` or `quit`               Exit
+
+#### Command Line Options
+- `--db <path>`                  Path to RocksDB database (required)
+- `--export-cf <cf>`             Column family to export (use with --export-file)
+- `--export-file <path>`         Output CSV file path (use with --export-cf)
 
 ### JSON Pretty Print
 When retrieving values that are JSON formatted, you can use the `--pretty` flag with the `get` command to format the output:
