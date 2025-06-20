@@ -89,6 +89,38 @@ The CSV export includes:
 - All key-value pairs from the specified column family
 - Proper CSV escaping for special characters in JSON values
 
+### Get Last Entry Mode
+You can retrieve the last (lexicographically largest) key-value pair from any column family:
+
+```sh
+# Get last entry from specific column family
+rocksdb-cli --db /path/to/rocksdb --last <column_family>
+
+# Examples
+rocksdb-cli --db ./testdb --last users
+rocksdb-cli --db ./testdb --last products
+```
+
+### Watch Mode (Continuous Monitoring)
+Monitor a column family for new entries in real-time, similar to `ping -t`:
+
+```sh
+# Watch specific column family for new entries
+rocksdb-cli --db /path/to/rocksdb --watch <column_family> [--interval <duration>]
+
+# Examples
+rocksdb-cli --db ./testdb --watch users                    # Default 1s interval
+rocksdb-cli --db ./testdb --watch logs --interval 500ms    # Custom interval
+rocksdb-cli --db ./testdb --watch products --interval 2s   # 2 second interval
+```
+
+Watch mode features:
+- Shows initial last entry when starting
+- Detects and displays new entries as they are added
+- Configurable polling interval (default: 1 second)
+- Graceful shutdown with Ctrl+C
+- Timestamps for each new entry detected
+
 ### Basic Commands
 There are two ways to use commands:
 
@@ -125,6 +157,9 @@ prefix mycf pre
 - `--db <path>`                  Path to RocksDB database (required)
 - `--export-cf <cf>`             Column family to export (use with --export-file)
 - `--export-file <path>`         Output CSV file path (use with --export-cf)
+- `--last <cf>`                  Get the last key-value pair from column family
+- `--watch <cf>`                 Watch for new entries in column family (like ping -t)
+- `--interval <duration>`        Watch interval (default: 1s, use with --watch)
 
 ### JSON Pretty Print
 When retrieving values that are JSON formatted, you can use the `--pretty` flag with the `get` command to format the output:

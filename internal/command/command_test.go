@@ -151,6 +151,28 @@ func (m *mockDB) DropCF(cf string) error {
 	return nil
 }
 
+func (m *mockDB) GetLastCF(cf string) (string, string, error) {
+	if !m.cfExists[cf] {
+		return "", "", errors.New("column family not found")
+	}
+
+	cfData, ok := m.data[cf]
+	if !ok || len(cfData) == 0 {
+		return "", "", errors.New("column family is empty")
+	}
+
+	// Find the lexicographically last key
+	var lastKey, lastValue string
+	for key, value := range cfData {
+		if lastKey == "" || key > lastKey {
+			lastKey = key
+			lastValue = value
+		}
+	}
+
+	return lastKey, lastValue, nil
+}
+
 func (m *mockDB) ExportToCSV(cf, filePath string) error {
 	if !m.cfExists[cf] {
 		return errors.New("column family not found")
@@ -446,6 +468,42 @@ func TestHandler_Execute(t *testing.T) {
 		{
 			name:        "export nonexistent cf should fail",
 			cmd:         "export nonexistent test_export3.csv",
+			expectError: true,
+			checkFunc: func() error {
+				// The command should handle the error gracefully
+				return nil
+			},
+		},
+		{
+			name: "last with current cf",
+			cmd:  "last",
+			setupFunc: func() {
+				state.CurrentCF = "default"
+				mockDB.PutCF("default", "lastkey1", "lastvalue1")
+				mockDB.PutCF("default", "lastkey2", "lastvalue2")
+			},
+			checkFunc: func() error {
+				key, _, err := mockDB.GetLastCF("default")
+				if err != nil || key == "" {
+					return errors.New("last command failed")
+				}
+				return nil
+			},
+		},
+		{
+			name: "last with explicit cf",
+			cmd:  "last default",
+			checkFunc: func() error {
+				key, _, err := mockDB.GetLastCF("default")
+				if err != nil || key == "" {
+					return errors.New("last command with cf failed")
+				}
+				return nil
+			},
+		},
+		{
+			name:        "last nonexistent cf should fail",
+			cmd:         "last nonexistent",
 			expectError: true,
 			checkFunc: func() error {
 				// The command should handle the error gracefully

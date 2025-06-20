@@ -290,6 +290,31 @@ func (h *Handler) Execute(input string) bool {
 		} else {
 			fmt.Printf("Successfully exported column family '%s' to '%s'\n", cf, filePath)
 		}
+	case "last":
+		cf := ""
+		if len(parts) == 1 && h.State != nil {
+			// last - use current CF
+			if s, ok := h.State.(*ReplState); ok && s != nil {
+				cf = s.CurrentCF
+			} else {
+				fmt.Println("No current column family set")
+				return true
+			}
+		} else if len(parts) == 2 {
+			// last <cf>
+			cf = parts[1]
+		} else {
+			fmt.Println("Usage: last [<cf>]")
+			fmt.Println("  Get the last key-value pair from column family")
+			return true
+		}
+
+		key, value, err := h.DB.GetLastCF(cf)
+		if err != nil {
+			fmt.Printf("Get last failed: %v\n", err)
+		} else {
+			fmt.Printf("Last entry in '%s': %s = %s\n", cf, key, value)
+		}
 	case "exit", "quit":
 		return false
 	default:

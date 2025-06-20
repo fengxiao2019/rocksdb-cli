@@ -19,6 +19,7 @@ type KeyValueDB interface {
 	PutCF(cf, key, value string) error
 	PrefixScanCF(cf, prefix string, limit int) (map[string]string, error)
 	ScanCF(cf string, start, end []byte, opts ScanOptions) (map[string]string, error)
+	GetLastCF(cf string) (string, string, error) // Returns key, value, error
 	ExportToCSV(cf, filePath string) error
 	ListCFs() ([]string, error)
 	CreateCF(cf string) error
@@ -233,6 +234,29 @@ func (d *DB) DropCF(cf string) error {
 	h.Destroy()
 	delete(d.cfHandles, cf)
 	return nil
+}
+
+func (d *DB) GetLastCF(cf string) (string, string, error) {
+	h, ok := d.cfHandles[cf]
+	if !ok {
+		return "", "", errors.New("column family not found")
+	}
+
+	it := d.db.NewIteratorCF(d.ro, h)
+	defer it.Close()
+
+	// Seek to the last key-value pair
+	it.SeekToLast()
+	if !it.Valid() {
+		return "", "", errors.New("column family is empty")
+	}
+
+	k := it.Key()
+	v := it.Value()
+	defer k.Free()
+	defer v.Free()
+
+	return string(k.Data()), string(v.Data()), nil
 }
 
 func (d *DB) ExportToCSV(cf, filePath string) error {
