@@ -29,42 +29,146 @@ rocksdb-cli/
 └── README.md
 ```
 
-## macOS Installation and Build Process
+## Installation and Build Process
 
-### 1. Install RocksDB and Dependencies
+### Prerequisites
 
+RocksDB CLI requires RocksDB C++ libraries to be installed on your system.
+
+#### macOS
 ```sh
 brew install rocksdb snappy lz4 zstd bzip2
-```
 
-### 2. Configure Environment Variables (Recommended to add to ~/.zshrc or ~/.bash_profile)
-
-```sh
+# Configure environment variables (add to ~/.zshrc or ~/.bash_profile)
 export CGO_CFLAGS="-I/opt/homebrew/Cellar/rocksdb/10.2.1/include"
 export CGO_LDFLAGS="-L/opt/homebrew/Cellar/rocksdb/10.2.1/lib -L/opt/homebrew/lib -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd"
+
+# Apply environment variables
+source ~/.zshrc
 ```
 
 > Note: Replace 10.2.1 with your actual RocksDB version.
 
-Run `source ~/.zshrc` to apply environment variables.
+#### Linux (Ubuntu/Debian)
+```sh
+sudo apt-get update
+sudo apt-get install librocksdb-dev libsnappy-dev liblz4-dev libzstd-dev libbz2-dev build-essential
+```
 
-### 3. Install Go Dependencies
+#### Linux (CentOS/RHEL)
+```sh
+sudo yum install rocksdb-devel snappy-devel lz4-devel libzstd-devel bzip2-devel gcc-c++
+```
 
+#### Windows
+Windows builds require more setup due to C++ dependencies. You have several options:
+
+**Option 1: Use WSL (Recommended)**
+```bash
+# Install WSL and Ubuntu, then follow Linux instructions above
+wsl --install
+```
+
+**Option 2: Native Windows Build**
+1. Install [vcpkg](https://github.com/Microsoft/vcpkg):
+```cmd
+git clone https://github.com/Microsoft/vcpkg.git
+cd vcpkg
+.\bootstrap-vcpkg.bat
+```
+
+2. Install RocksDB and dependencies:
+```cmd
+.\vcpkg install rocksdb:x64-windows
+.\vcpkg install snappy:x64-windows
+.\vcpkg install lz4:x64-windows
+.\vcpkg install zstd:x64-windows
+```
+
+3. Set environment variables:
+```cmd
+set CGO_CFLAGS=-I%VCPKG_ROOT%\installed\x64-windows\include
+set CGO_LDFLAGS=-L%VCPKG_ROOT%\installed\x64-windows\lib -lrocksdb -lsnappy -llz4 -lzstd
+set CGO_ENABLED=1
+```
+
+### Building Executables
+
+#### Install Dependencies
 ```sh
 go mod tidy
 ```
 
-### 4. Build and Test
-
+#### Quick Build (Current Platform)
 ```sh
-go build ./...
-go test ./...
+# Using Make
+make build
+
+# Or directly with Go
+go build -o build/rocksdb-cli ./cmd
 ```
 
-### 5. Common Issues
+#### Cross-Platform Building
+
+**Important Note**: RocksDB CLI uses CGO (C bindings), which makes cross-compilation complex. Each platform needs its native C++ libraries.
+
+**Option 1: Native Build (Recommended)**
+Build on each target platform:
+```sh
+# On any platform
+make build
+# or
+make build-native
+```
+
+**Option 2: Docker Build (Linux)**
+Build Linux executables using Docker:
+```sh
+# Build Linux executable using Docker
+make build-linux-docker
+
+# Or manually
+chmod +x scripts/build_docker.sh
+./scripts/build_docker.sh
+```
+
+**Option 3: GitHub Actions (Automated)**
+The repository includes GitHub Actions workflows that automatically build for all platforms:
+- Push to `main` branch triggers builds
+- Create a release to generate downloadable binaries
+- Artifacts are available for download from Actions tab
+
+**Option 4: Windows Build**
+On Windows systems:
+```cmd
+# After setting up vcpkg and RocksDB (see Windows prerequisites above)
+scripts\build.bat
+```
+
+#### Supported Platforms
+- **Linux**: amd64, arm64 (via Docker or native)
+- **macOS**: amd64 (Intel), arm64 (Apple Silicon) (native only)
+- **Windows**: amd64 (native with proper setup)
+
+Built executables are placed in the `build/` directory:
+- `rocksdb-cli` (current platform)
+- `rocksdb-cli-linux-amd64` (Linux)
+- `rocksdb-cli-windows-amd64.exe` (Windows)
+
+#### Running Tests
+```sh
+# Run all tests
+make test
+
+# Run tests with coverage
+make test-coverage
+```
+
+### Common Issues
 - If header or library files are not found, verify environment variable paths match installation paths.
-- If you see errors like `library 'snappy' not found`, ensure all dependencies are installed via brew.
+- If you see errors like `library 'snappy' not found`, ensure all dependencies are installed via package manager.
 - Linker warnings about duplicate libraries can be ignored, they don't affect functionality.
+- For Windows builds, ensure CGO is enabled and proper C++ toolchain is available.
 
 ## Usage
 

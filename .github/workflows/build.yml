@@ -1,0 +1,123 @@
+name: Build Cross-Platform
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ created ]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+    
+    - name: Install RocksDB dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y librocksdb-dev libsnappy-dev liblz4-dev libzstd-dev libbz2-dev build-essential
+    
+    - name: Build for Linux amd64
+      run: |
+        go build -ldflags "-X main.version=${{ github.ref_name }}" -o build/rocksdb-cli-linux-amd64 ./cmd
+    
+    - name: Build for Linux arm64
+      run: |
+        GOOS=linux GOARCH=arm64 go build -ldflags "-X main.version=${{ github.ref_name }}" -o build/rocksdb-cli-linux-arm64 ./cmd
+    
+    - name: Upload Linux artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: linux-binaries
+        path: build/rocksdb-cli-linux-*
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+    
+    - name: Install RocksDB dependencies
+      run: |
+        brew install rocksdb snappy lz4 zstd bzip2
+    
+    - name: Set up environment
+      run: |
+        echo "CGO_CFLAGS=-I$(brew --prefix rocksdb)/include" >> $GITHUB_ENV
+        echo "CGO_LDFLAGS=-L$(brew --prefix rocksdb)/lib -L$(brew --prefix)/lib -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd" >> $GITHUB_ENV
+    
+    - name: Build for macOS amd64
+      run: |
+        GOOS=darwin GOARCH=amd64 go build -ldflags "-X main.version=${{ github.ref_name }}" -o build/rocksdb-cli-darwin-amd64 ./cmd
+    
+    - name: Build for macOS arm64
+      run: |
+        GOOS=darwin GOARCH=arm64 go build -ldflags "-X main.version=${{ github.ref_name }}" -o build/rocksdb-cli-darwin-arm64 ./cmd
+    
+    - name: Upload macOS artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: macos-binaries
+        path: build/rocksdb-cli-darwin-*
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+    
+    - name: Set up vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgGitCommitId: 'a42af01b72c28a8e1d7b48107b33e4f286a55ef6'
+    
+    - name: Install RocksDB dependencies
+      run: |
+        vcpkg install rocksdb:x64-windows
+        vcpkg install snappy:x64-windows
+        vcpkg install lz4:x64-windows
+        vcpkg install zstd:x64-windows
+    
+    - name: Build for Windows amd64
+      run: |
+        $env:CGO_CFLAGS = "-I$env:VCPKG_ROOT\installed\x64-windows\include"
+        $env:CGO_LDFLAGS = "-L$env:VCPKG_ROOT\installed\x64-windows\lib -lrocksdb -lsnappy -llz4 -lzstd"
+        $env:CGO_ENABLED = "1"
+        go build -ldflags "-X main.version=${{ github.ref_name }}" -o build/rocksdb-cli-windows-amd64.exe ./cmd
+    
+    - name: Upload Windows artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: windows-binaries
+        path: build/rocksdb-cli-windows-*
+
+  release:
+    if: github.event_name == 'release'
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+    
+    - name: Release binaries
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          linux-binaries/*
+          macos-binaries/*
+          windows-binaries/* 
