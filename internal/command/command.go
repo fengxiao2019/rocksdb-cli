@@ -315,10 +315,29 @@ func (h *Handler) Execute(input string) bool {
 		} else {
 			fmt.Printf("Last entry in '%s': %s = %s\n", cf, key, value)
 		}
+	case "help":
+		fmt.Println("Available commands:")
+		fmt.Println("  usecf <cf>                    - Switch current column family")
+		fmt.Println("  get [<cf>] <key> [--pretty]   - Query by key (use --pretty for JSON formatting)")
+		fmt.Println("  put [<cf>] <key> <value>      - Insert/Update key-value pair")
+		fmt.Println("  prefix [<cf>] <prefix>        - Query by key prefix")
+		fmt.Println("  scan [<cf>] [start] [end]     - Scan range with options")
+		fmt.Println("    Options: --limit=N --reverse --values=no")
+		fmt.Println("  last [<cf>]                   - Get last key-value pair from CF")
+		fmt.Println("  export [<cf>] <file_path>     - Export CF to CSV file")
+		fmt.Println("  listcf                        - List all column families")
+		fmt.Println("  createcf <cf>                 - Create new column family")
+		fmt.Println("  dropcf <cf>                   - Drop column family")
+		fmt.Println("  help                          - Show this help message")
+		fmt.Println("  exit/quit                     - Exit the CLI")
+		fmt.Println("")
+		fmt.Println("Notes:")
+		fmt.Println("  - Commands without [<cf>] use current column family")
+		fmt.Println("  - Current column family is shown in prompt: rocksdb[current_cf]>")
 	case "exit", "quit":
 		return false
 	default:
-		fmt.Println("Unknown command")
+		fmt.Println("Unknown command. Type 'help' for available commands.")
 	}
 	return true
 }

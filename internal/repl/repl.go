@@ -11,7 +11,8 @@ import (
 func Start(rdb db.KeyValueDB) {
 	state := &command.ReplState{CurrentCF: "default"}
 	handler := &command.Handler{DB: rdb, State: state}
-	fmt.Println("Welcome to rocksdb-cli with column family support. Type 'help' for commands, 'exit/quit' to quit.")
+	fmt.Println("Welcome to rocksdb-cli with column family support.")
+	fmt.Println("Type 'help' for available commands, 'exit' or 'quit' to exit.")
 	p := prompt.New(
 		func(in string) {
 			if !handler.Execute(in) {
@@ -36,15 +37,16 @@ func Start(rdb db.KeyValueDB) {
 func completer(d prompt.Document) []prompt.Suggest {
 	s := []prompt.Suggest{
 		{Text: "usecf", Description: "usecf <cf> Switch current column family"},
-		{Text: "get", Description: "get [<cf>] <key> Query by CF"},
+		{Text: "get", Description: "get [<cf>] <key> [--pretty] Query by key (--pretty for JSON)"},
 		{Text: "put", Description: "put [<cf>] <key> <value> Insert/Update"},
-		{Text: "prefix", Description: "prefix [<cf>] <prefix> Query by CF prefix"},
-		{Text: "scan", Description: "scan [<cf>] [start] [end] Scan range with options"},
+		{Text: "prefix", Description: "prefix [<cf>] <prefix> Query by key prefix"},
+		{Text: "scan", Description: "scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no]"},
 		{Text: "last", Description: "last [<cf>] Get last key-value pair from CF"},
 		{Text: "export", Description: "export [<cf>] <file_path> Export CF to CSV file"},
 		{Text: "listcf", Description: "List all column families"},
 		{Text: "createcf", Description: "createcf <cf> Create new column family"},
 		{Text: "dropcf", Description: "dropcf <cf> Drop column family"},
+		{Text: "help", Description: "Show help with all available commands"},
 		{Text: "exit", Description: "Exit"},
 		{Text: "quit", Description: "Exit"},
 	}
