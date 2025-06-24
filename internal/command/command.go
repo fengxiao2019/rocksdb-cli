@@ -50,6 +50,40 @@ func parseFlags(args []string) (map[string]string, []string) {
 	return flags, nonFlags
 }
 
+// formatValue formats a value based on pretty flag
+func formatValue(value string, pretty bool) string {
+	if pretty {
+		return prettyPrintJSON(value)
+	}
+	return value
+}
+
+// parseCFAndArgs extracts column family and remaining arguments from command parts
+// Supports patterns like: cmd [<cf>] <args...> [--flags]
+func parseCFAndArgs(parts []string, currentCF string) (cf string, args []string, flags map[string]string) {
+	if len(parts) <= 1 {
+		return currentCF, []string{}, make(map[string]string)
+	}
+
+	// Parse flags first
+	flags, nonFlags := parseFlags(parts[1:])
+
+	// If no non-flag arguments, use current CF
+	if len(nonFlags) == 0 {
+		return currentCF, []string{}, flags
+	}
+
+	// If first arg looks like a CF name and we have more args, treat it as CF
+	// Otherwise, treat first arg as a command parameter and use current CF
+	if len(nonFlags) >= 2 {
+		// Multiple args: first could be CF
+		return nonFlags[0], nonFlags[1:], flags
+	} else {
+		// Single arg: use current CF, arg is the parameter
+		return currentCF, nonFlags, flags
+	}
+}
+
 func (h *Handler) Execute(input string) bool {
 	input = strings.TrimSpace(input)
 	if input == "" {
@@ -291,29 +325,51 @@ func (h *Handler) Execute(input string) bool {
 			fmt.Printf("Successfully exported column family '%s' to '%s'\n", cf, filePath)
 		}
 	case "last":
-		cf := ""
-		if len(parts) == 1 && h.State != nil {
+		var cf string
+		var pretty bool
+
+		// Get current CF if available
+		currentCF := ""
+		if s, ok := h.State.(*ReplState); ok && s != nil {
+			currentCF = s.CurrentCF
+		}
+
+		// Parse command arguments
+		if len(parts) == 1 {
 			// last - use current CF
-			if s, ok := h.State.(*ReplState); ok && s != nil {
-				cf = s.CurrentCF
-			} else {
+			if currentCF == "" {
 				fmt.Println("No current column family set")
 				return true
 			}
-		} else if len(parts) == 2 {
-			// last <cf>
-			cf = parts[1]
+			cf = currentCF
 		} else {
-			fmt.Println("Usage: last [<cf>]")
-			fmt.Println("  Get the last key-value pair from column family")
-			return true
+			// Parse flags and arguments
+			flags, nonFlags := parseFlags(parts[1:])
+			pretty = flags["pretty"] == "true"
+
+			if len(nonFlags) == 0 {
+				// last --pretty
+				if currentCF == "" {
+					fmt.Println("No current column family set")
+					return true
+				}
+				cf = currentCF
+			} else if len(nonFlags) == 1 {
+				// last <cf> or last <cf> --pretty
+				cf = nonFlags[0]
+			} else {
+				fmt.Println("Usage: last [<cf>] [--pretty]")
+				fmt.Println("  Get the last key-value pair from column family")
+				return true
+			}
 		}
 
 		key, value, err := h.DB.GetLastCF(cf)
 		if err != nil {
 			fmt.Printf("Get last failed: %v\n", err)
 		} else {
-			fmt.Printf("Last entry in '%s': %s = %s\n", cf, key, value)
+			formattedValue := formatValue(value, pretty)
+			fmt.Printf("Last entry in '%s': %s = %s\n", cf, key, formattedValue)
 		}
 	case "help":
 		fmt.Println("Available commands:")
@@ -323,7 +379,7 @@ func (h *Handler) Execute(input string) bool {
 		fmt.Println("  prefix [<cf>] <prefix>        - Query by key prefix")
 		fmt.Println("  scan [<cf>] [start] [end]     - Scan range with options")
 		fmt.Println("    Options: --limit=N --reverse --values=no")
-		fmt.Println("  last [<cf>]                   - Get last key-value pair from CF")
+		fmt.Println("  last [<cf>] [--pretty]        - Get last key-value pair from CF")
 		fmt.Println("  export [<cf>] <file_path>     - Export CF to CSV file")
 		fmt.Println("  listcf                        - List all column families")
 		fmt.Println("  createcf <cf>                 - Create new column family")

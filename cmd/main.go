@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -26,6 +27,7 @@ DESCRIPTION:
 OPTIONS:
     --db <path>                  Path to RocksDB database (required)
     --last <cf>                  Get the last key-value pair from column family
+    --pretty                     Pretty print JSON values (use with --last)
     --export-cf <cf>             Column family to export (use with --export-file)
     --export-file <file>         Output CSV file path for export
     --watch <cf>                 Watch for new entries in column family (real-time)
@@ -38,6 +40,9 @@ EXAMPLES:
 
     # Get last entry from a column family
     rocksdb-cli --db /path/to/db --last users
+
+    # Get last entry with pretty-printed JSON
+    rocksdb-cli --db /path/to/db --last users --pretty
 
     # Export column family to CSV
     rocksdb-cli --db /path/to/db --export-cf users --export-file users.csv
@@ -53,7 +58,7 @@ INTERACTIVE COMMANDS:
     put [<cf>] <key> <value>     Insert/Update key-value pair
     prefix [<cf>] <prefix>       Query by key prefix
     scan [<cf>] [start] [end]    Scan range with options
-    last [<cf>]                  Get last key-value pair from CF
+    last [<cf>] [--pretty]       Get last key-value pair from CF
     export [<cf>] <file_path>    Export CF to CSV file
     listcf                       List all column families
     createcf <cf>                Create new column family
@@ -71,6 +76,23 @@ SCAN OPTIONS:
 For more information, visit: https://github.com/yourusername/rocksdb-cli
 `
 
+// formatValue formats a value based on pretty flag (same as in command package)
+func formatValue(value string, pretty bool) string {
+	if !pretty {
+		return value
+	}
+
+	var jsonData interface{}
+	if err := json.Unmarshal([]byte(value), &jsonData); err != nil {
+		return value // If not valid JSON, return as is
+	}
+	prettyJSON, err := json.MarshalIndent(jsonData, "", "  ")
+	if err != nil {
+		return value // If can't pretty print, return as is
+	}
+	return string(prettyJSON)
+}
+
 func main() {
 	// Custom usage function
 	flag.Usage = func() {
@@ -81,6 +103,7 @@ func main() {
 	exportCF := flag.String("export-cf", "", "Column family to export")
 	exportFile := flag.String("export-file", "", "Output CSV file path")
 	lastCF := flag.String("last", "", "Get last key-value pair from column family")
+	prettyFlag := flag.Bool("pretty", false, "Pretty print JSON values (use with --last)")
 	watchCF := flag.String("watch", "", "Watch for new entries in column family (like ping -t)")
 	watchInterval := flag.Duration("interval", 1*time.Second, "Watch interval (default: 1s)")
 	helpFlag := flag.Bool("help", false, "Show help message")
@@ -124,7 +147,8 @@ func main() {
 			fmt.Printf("Get last failed: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Last entry in '%s': %s = %s\n", *lastCF, key, value)
+		formattedValue := formatValue(value, *prettyFlag)
+		fmt.Printf("Last entry in '%s': %s = %s\n", *lastCF, key, formattedValue)
 		return
 	}
 

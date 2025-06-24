@@ -2,6 +2,7 @@ package command
 
 import (
 	"errors"
+	"fmt"
 	"rocksdb-cli/internal/db"
 	"strings"
 	"testing"
@@ -497,6 +498,53 @@ func TestHandler_Execute(t *testing.T) {
 				key, _, err := mockDB.GetLastCF("default")
 				if err != nil || key == "" {
 					return errors.New("last command with cf failed")
+				}
+				return nil
+			},
+		},
+		{
+			name: "last with pretty flag and current cf",
+			cmd:  "last --pretty",
+			setupFunc: func() {
+				state.CurrentCF = "default"
+				// Clear existing data first
+				mockDB.data["default"] = make(map[string]string)
+				mockDB.PutCF("default", "json_key", `{"name":"test","value":123}`)
+			},
+			checkFunc: func() error {
+				key, value, err := mockDB.GetLastCF("default")
+				if err != nil {
+					return fmt.Errorf("GetLastCF failed: %v", err)
+				}
+				if key != "json_key" {
+					return fmt.Errorf("expected key 'json_key', got '%s'", key)
+				}
+				// Verify the value is JSON
+				if !strings.Contains(value, `"name":"test"`) {
+					return fmt.Errorf("test data should contain JSON, got: %s", value)
+				}
+				return nil
+			},
+		},
+		{
+			name: "last with pretty flag and explicit cf",
+			cmd:  "last default --pretty",
+			setupFunc: func() {
+				// Clear existing data first
+				mockDB.data["default"] = make(map[string]string)
+				mockDB.PutCF("default", "json_key2", `{"users":[{"id":1,"name":"Alice"}]}`)
+			},
+			checkFunc: func() error {
+				key, value, err := mockDB.GetLastCF("default")
+				if err != nil {
+					return fmt.Errorf("GetLastCF failed: %v", err)
+				}
+				if key != "json_key2" {
+					return fmt.Errorf("expected key 'json_key2', got '%s'", key)
+				}
+				// Verify the value is JSON
+				if !strings.Contains(value, `"users"`) {
+					return fmt.Errorf("test data should contain JSON, got: %s", value)
 				}
 				return nil
 			},
