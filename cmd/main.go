@@ -11,17 +11,91 @@ import (
 	"time"
 )
 
+const helpText = `rocksdb-cli - Interactive RocksDB command-line tool with column family support
+
+USAGE:
+    rocksdb-cli --db <database_path> [OPTIONS]
+
+DESCRIPTION:
+    A powerful command-line interface for RocksDB databases that provides:
+    - Interactive REPL with column family support
+    - Direct command-line operations for scripting
+    - Data export capabilities
+    - Real-time monitoring with watch mode
+
+OPTIONS:
+    --db <path>                  Path to RocksDB database (required)
+    --last <cf>                  Get the last key-value pair from column family
+    --export-cf <cf>             Column family to export (use with --export-file)
+    --export-file <file>         Output CSV file path for export
+    --watch <cf>                 Watch for new entries in column family (real-time)
+    --interval <duration>        Watch interval (default: 1s, e.g., 500ms, 2s, 1m)
+    --help                       Show this help message
+
+EXAMPLES:
+    # Start interactive mode
+    rocksdb-cli --db /path/to/db
+
+    # Get last entry from a column family
+    rocksdb-cli --db /path/to/db --last users
+
+    # Export column family to CSV
+    rocksdb-cli --db /path/to/db --export-cf users --export-file users.csv
+
+    # Watch for new entries (real-time monitoring)
+    rocksdb-cli --db /path/to/db --watch logs --interval 500ms
+
+INTERACTIVE COMMANDS:
+    Once in interactive mode, you can use these commands:
+    
+    usecf <cf>                   Switch current column family
+    get [<cf>] <key> [--pretty]  Query by key (use --pretty for JSON formatting)
+    put [<cf>] <key> <value>     Insert/Update key-value pair
+    prefix [<cf>] <prefix>       Query by key prefix
+    scan [<cf>] [start] [end]    Scan range with options
+    last [<cf>]                  Get last key-value pair from CF
+    export [<cf>] <file_path>    Export CF to CSV file
+    listcf                       List all column families
+    createcf <cf>                Create new column family
+    dropcf <cf>                  Drop column family
+    help                         Show interactive help
+    exit/quit                    Exit the CLI
+
+    Note: Commands without [<cf>] use current column family shown in prompt
+
+SCAN OPTIONS:
+    --limit=N                    Limit number of results
+    --reverse                    Scan in reverse order
+    --values=no                  Show only keys, not values
+
+For more information, visit: https://github.com/yourusername/rocksdb-cli
+`
+
 func main() {
+	// Custom usage function
+	flag.Usage = func() {
+		fmt.Print(helpText)
+	}
+
 	dbPath := flag.String("db", "", "Path to RocksDB database")
 	exportCF := flag.String("export-cf", "", "Column family to export")
 	exportFile := flag.String("export-file", "", "Output CSV file path")
 	lastCF := flag.String("last", "", "Get last key-value pair from column family")
 	watchCF := flag.String("watch", "", "Watch for new entries in column family (like ping -t)")
 	watchInterval := flag.Duration("interval", 1*time.Second, "Watch interval (default: 1s)")
+	helpFlag := flag.Bool("help", false, "Show help message")
 	flag.Parse()
 
+	// Show help if requested
+	if *helpFlag {
+		fmt.Print(helpText)
+		os.Exit(0)
+	}
+
 	if *dbPath == "" {
-		fmt.Println("Please specify --db parameter pointing to RocksDB path")
+		fmt.Println("Error: --db parameter is required")
+		fmt.Println("\nUse --help for detailed usage information")
+		fmt.Println("Quick start: rocksdb-cli --db /path/to/database")
 		os.Exit(1)
 	}
 
