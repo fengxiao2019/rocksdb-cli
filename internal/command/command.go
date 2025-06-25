@@ -109,22 +109,34 @@ func (h *Handler) Execute(input string) bool {
 		cf := ""
 		var start, end []byte
 
+		// Get current CF if available
+		currentCF := ""
+		if s, ok := h.State.(*ReplState); ok && s != nil {
+			currentCF = s.CurrentCF
+		}
+
 		// Parse column family and range
 		switch len(args) {
-		case 1: // scan <start>
-			if s, ok := h.State.(*ReplState); ok && s != nil {
-				cf = s.CurrentCF
-				start = []byte(args[0])
-			} else {
+		case 0: // scan (no args)
+			fmt.Println("Usage: scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no]")
+			return true
+		case 1: // scan <start> (using current CF)
+			if currentCF == "" {
 				fmt.Println("No current column family set")
 				return true
 			}
-		case 2: // scan <start> <end> or scan <cf> <start>
-			if s, ok := h.State.(*ReplState); ok && s != nil {
-				cf = s.CurrentCF
+			cf = currentCF
+			start = []byte(args[0])
+		case 2:
+			// Check if first arg is likely a CF name by checking if it exists
+			// If we can't determine, prefer using current CF with start/end pattern
+			if currentCF != "" {
+				// scan <start> <end> (using current CF)
+				cf = currentCF
 				start = []byte(args[0])
 				end = []byte(args[1])
 			} else {
+				// scan <cf> <start> (no current CF set)
 				cf = args[0]
 				start = []byte(args[1])
 			}

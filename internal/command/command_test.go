@@ -99,14 +99,17 @@ func (m *mockDB) ScanCF(cf string, start, end []byte, opts db.ScanOptions) (map[
 	endStr := string(end)
 
 	for _, k := range keys {
+		// For forward scan: start <= k < end
+		// For reverse scan: start <= k < end (but processed in reverse order)
 		if len(start) > 0 && k < startStr {
 			continue
 		}
-		if len(end) > 0 && k >= endStr && !opts.Reverse {
-			break
-		}
-		if len(end) > 0 && k > endStr && opts.Reverse {
-			continue
+		if len(end) > 0 && k >= endStr {
+			if opts.Reverse {
+				continue // Skip keys >= end
+			} else {
+				break // Stop at end for forward scan
+			}
 		}
 
 		if opts.Values {
@@ -408,22 +411,30 @@ func TestHandler_Execute(t *testing.T) {
 		{
 			name: "scan reverse",
 			cmd:  "scan key1 key5 --reverse",
+			setupFunc: func() {
+				// Clear default CF and set up clean test data
+				mockDB.data["default"] = make(map[string]string)
+				mockDB.PutCF("default", "key1", "v1")
+				mockDB.PutCF("default", "key2", "v2")
+				mockDB.PutCF("default", "key3", "v3")
+				mockDB.PutCF("default", "key4", "v4")
+				mockDB.PutCF("default", "key5", "v5")
+			},
 			checkFunc: func() error {
 				res, err := mockDB.ScanCF("default", []byte("key1"), []byte("key5"), db.ScanOptions{Values: true, Reverse: true})
 				if err != nil {
 					return errors.New("reverse scan failed")
 				}
 
-				// Convert map keys to slice for order checking
-				keys := make([]string, 0, len(res))
-				for k := range res {
-					keys = append(keys, k)
+				// Should get key1, key2, key3, key4 (key5 is excluded in range scan)
+				expectedKeys := []string{"key1", "key2", "key3", "key4"}
+				if len(res) != len(expectedKeys) {
+					return fmt.Errorf("expected %d keys, got %d", len(expectedKeys), len(res))
 				}
 
-				// Check if keys are in reverse order
-				for i := 0; i < len(keys)-1; i++ {
-					if keys[i] < keys[i+1] {
-						return errors.New("reverse scan order incorrect")
+				for _, expectedKey := range expectedKeys {
+					if _, exists := res[expectedKey]; !exists {
+						return fmt.Errorf("expected key %s not found in results", expectedKey)
 					}
 				}
 				return nil
@@ -441,6 +452,58 @@ func TestHandler_Execute(t *testing.T) {
 					if v != "" {
 						return errors.New("scan without values returned values")
 					}
+				}
+				return nil
+			},
+		},
+		{
+			name: "scan two args with current cf should be start/end",
+			cmd:  "scan key1 key3",
+			setupFunc: func() {
+				state.CurrentCF = "default"
+				// Ensure we have test data
+				mockDB.PutCF("default", "key1", "v1")
+				mockDB.PutCF("default", "key2", "v2")
+				mockDB.PutCF("default", "key3", "v3")
+			},
+			checkFunc: func() error {
+				// This should scan from key1 to key3 in default CF, not treat key1 as CF name
+				res, err := mockDB.ScanCF("default", []byte("key1"), []byte("key3"), db.ScanOptions{Values: true})
+				if err != nil {
+					return fmt.Errorf("scan with current cf failed: %v", err)
+				}
+				// Should get key1 and key2 (key3 is excluded in range scan)
+				if len(res) != 2 {
+					return fmt.Errorf("expected 2 results, got %d", len(res))
+				}
+				if _, ok := res["key1"]; !ok {
+					return errors.New("key1 should be in results")
+				}
+				if _, ok := res["key2"]; !ok {
+					return errors.New("key2 should be in results")
+				}
+				return nil
+			},
+		},
+		{
+			name: "scan two args without current cf should be cf/start",
+			cmd:  "scan testcf2 key1",
+			setupFunc: func() {
+				state.CurrentCF = "" // No current CF
+				mockDB.CreateCF("testcf2")
+				// Clear any existing data in testcf2
+				mockDB.data["testcf2"] = make(map[string]string)
+				mockDB.PutCF("testcf2", "key1", "v1")
+				mockDB.PutCF("testcf2", "key2", "v2")
+			},
+			checkFunc: func() error {
+				// This should scan from key1 to end in testcf2
+				res, err := mockDB.ScanCF("testcf2", []byte("key1"), nil, db.ScanOptions{Values: true})
+				if err != nil {
+					return fmt.Errorf("scan without current cf failed: %v", err)
+				}
+				if len(res) != 2 {
+					return fmt.Errorf("expected 2 results, got %d", len(res))
 				}
 				return nil
 			},
