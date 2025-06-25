@@ -800,6 +800,16 @@ func TestPrettyPrintJSON(t *testing.T) {
 			expected: "[\n  1,\n  2,\n  3\n]",
 		},
 		{
+			name:     "nested json object",
+			input:    `{"user":{"name":"Alice","details":{"age":25,"hobbies":["reading","coding"]}},"meta":{"created":"2024-01-01","active":true}}`,
+			expected: "{\n  \"meta\": {\n    \"active\": true,\n    \"created\": \"2024-01-01\"\n  },\n  \"user\": {\n    \"details\": {\n      \"age\": 25,\n      \"hobbies\": [\n        \"reading\",\n        \"coding\"\n      ]\n    },\n    \"name\": \"Alice\"\n  }\n}",
+		},
+		{
+			name:     "complex nested array",
+			input:    `{"items":[{"id":1,"tags":["important","urgent"]},{"id":2,"tags":["normal"]}]}`,
+			expected: "{\n  \"items\": [\n    {\n      \"id\": 1,\n      \"tags\": [\n        \"important\",\n        \"urgent\"\n      ]\n    },\n    {\n      \"id\": 2,\n      \"tags\": [\n        \"normal\"\n      ]\n    }\n  ]\n}",
+		},
+		{
 			name:     "invalid json",
 			input:    "not json",
 			expected: "not json",
@@ -815,10 +825,191 @@ func TestPrettyPrintJSON(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			result := prettyPrintJSON(c.input)
 			if result != c.expected {
-				t.Errorf("case %q failed: got %q, want %q", c.name, result, c.expected)
+				t.Errorf("case %q failed:\ngot:\n%q\nwant:\n%q", c.name, result, c.expected)
 			}
 		})
 	}
+}
+
+func TestPrettyPrintJSONDebug(t *testing.T) {
+	// Test with a valid complex JSON
+	complexJSON := `{
+		"user": {
+			"id": 1001,
+			"profile": {
+				"personal": {
+					"name": "Alice",
+					"age": 25,
+					"address": {
+						"street": "123 Main St",
+						"city": "Boston",
+						"coordinates": {
+							"lat": 42.3601,
+							"lng": -71.0589
+						}
+					}
+				},
+				"professional": {
+					"title": "Software Engineer",
+					"company": {
+						"name": "Tech Corp",
+						"industry": "Technology",
+						"employees": 500
+					},
+					"skills": ["Go", "Python", "JavaScript"],
+					"projects": [
+						{
+							"name": "Project A",
+							"status": "active",
+							"team": ["Alice", "Bob", "Carol"]
+						},
+						{
+							"name": "Project B",
+							"status": "completed",
+							"team": ["Alice", "Dave"]
+						}
+					]
+				}
+			},
+			"preferences": {
+				"theme": "dark",
+				"notifications": {
+					"email": true,
+					"push": false,
+					"sms": true
+				},
+				"languages": ["en", "es"]
+			},
+			"metadata": {
+				"created": "2024-01-01T00:00:00Z",
+				"updated": "2024-01-15T10:30:00Z",
+				"version": 2
+			}
+		}
+	}`
+
+	// Remove whitespace to make it compact
+	compactJSON := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(complexJSON, "\n", ""), "\t", ""), " ", "")
+	t.Logf("Compact JSON length: %d", len(compactJSON))
+
+	// Test step by step
+	var jsonData interface{}
+	err := json.Unmarshal([]byte(compactJSON), &jsonData)
+	if err != nil {
+		t.Fatalf("Failed to unmarshal JSON: %v", err)
+	}
+	t.Logf("Unmarshaling successful")
+
+	prettyJSON, err := json.MarshalIndent(jsonData, "", "  ")
+	if err != nil {
+		t.Fatalf("Failed to marshal indent: %v", err)
+	}
+	t.Logf("MarshalIndent successful, length: %d", len(prettyJSON))
+	t.Logf("Contains newlines: %v", strings.Contains(string(prettyJSON), "\n"))
+
+	// Test our function
+	result := prettyPrintJSON(compactJSON)
+	t.Logf("prettyPrintJSON result length: %d", len(result))
+	t.Logf("Result == input: %v", result == compactJSON)
+
+	if result == compactJSON {
+		t.Error("prettyPrintJSON returned the original JSON unchanged - this indicates an error in the function")
+	}
+
+	if !strings.Contains(result, "\n") {
+		t.Error("prettyPrintJSON should add newlines for formatting")
+	}
+}
+
+func TestPrettyFlagInRealScenarios(t *testing.T) {
+	// Create mock database and handler
+	mockDB := newMockDB()
+	state := &ReplState{CurrentCF: "default"}
+	handler := &Handler{DB: mockDB, State: state}
+
+	// Add complex nested JSON data like what users might actually store
+	testData := map[string]string{
+		"simple_user": `{"name":"Alice","age":25}`,
+		"nested_user": `{"id":1001,"profile":{"name":"Alice","contact":{"email":"alice@example.com","phone":"123-456-7890"},"settings":{"theme":"dark","notifications":{"email":true,"push":false}}}}`,
+		"array_data":  `{"users":[{"name":"Alice","roles":["admin","user"]},{"name":"Bob","roles":["user"]}],"meta":{"total":2,"active":true}}`,
+		"user_alice":  `{"name":"Alice","department":"Engineering","role":"Senior Developer"}`,
+	}
+
+	for key, jsonData := range testData {
+		mockDB.PutCF("default", key, jsonData)
+	}
+
+	// Test different scenarios where pretty flag is used
+	scenarios := []struct {
+		name               string
+		command            string
+		shouldHaveNewlines bool
+	}{
+		{
+			name:               "get simple JSON with pretty",
+			command:            "get simple_user --pretty",
+			shouldHaveNewlines: true,
+		},
+		{
+			name:               "get nested JSON with pretty",
+			command:            "get nested_user --pretty",
+			shouldHaveNewlines: true,
+		},
+		{
+			name:               "get array JSON with pretty",
+			command:            "get array_data --pretty",
+			shouldHaveNewlines: true,
+		},
+		{
+			name:               "jsonquery with pretty on top-level field",
+			command:            `jsonquery name Alice --pretty`,
+			shouldHaveNewlines: true,
+		},
+		{
+			name:               "last command with pretty",
+			command:            "last --pretty",
+			shouldHaveNewlines: true,
+		},
+	}
+
+	for _, scenario := range scenarios {
+		t.Run(scenario.name, func(t *testing.T) {
+			// Capture output to analyze it
+			// For now, just make sure the command executes
+			result := handler.Execute(scenario.command)
+			if !result {
+				t.Errorf("Command %q should execute successfully", scenario.command)
+			}
+		})
+	}
+
+	// Test the prettyPrintJSON function directly with the test data
+	for key, jsonData := range testData {
+		t.Run("direct_pretty_test_"+key, func(t *testing.T) {
+			result := prettyPrintJSON(jsonData)
+
+			if result == jsonData {
+				t.Errorf("prettyPrintJSON for %q returned unchanged data", key)
+			}
+
+			if !strings.Contains(result, "\n") {
+				t.Errorf("prettyPrintJSON for %q should contain newlines, got: %q", key, result)
+			}
+
+			// Check that the result is valid JSON
+			var checkData interface{}
+			if err := json.Unmarshal([]byte(result), &checkData); err != nil {
+				t.Errorf("prettyPrintJSON for %q produced invalid JSON: %v", key, err)
+			}
+		})
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func contains(slice []string, item string) bool {
