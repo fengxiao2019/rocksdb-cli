@@ -1,26 +1,58 @@
 #!/bin/bash
 
-# Build Linux executable using Docker
+# Docker build script for rocksdb-cli
+# This script handles proxy issues and builds the Docker image
 
 set -e
 
-APP_NAME="rocksdb-cli"
-VERSION=${VERSION:-"v1.0.0"}
-BUILD_DIR="build"
+echo "🐳 Building RocksDB CLI Docker image..."
 
-echo "Building $APP_NAME $VERSION for Linux using Docker..."
+# Check if Docker is running
+if ! docker info >/dev/null 2>&1; then
+    echo "❌ Error: Docker is not running"
+    exit 1
+fi
 
-# Create build directory
-mkdir -p $BUILD_DIR
+# Clear any proxy settings that might interfere
+export HTTP_PROXY=""
+export HTTPS_PROXY=""
+export http_proxy=""
+export https_proxy=""
+export no_proxy="*"
 
-# Build Docker image and extract executable
-docker build -f docker/Dockerfile.linux -t $APP_NAME-builder .
+# Build image with proxy bypass
+echo "📦 Building Docker image (this may take a few minutes)..."
 
-# Create temporary container and copy executable
-CONTAINER_ID=$(docker create $APP_NAME-builder)
-docker cp $CONTAINER_ID:/workspace/build/rocksdb-cli-linux-amd64 $BUILD_DIR/
-docker rm $CONTAINER_ID
+# Try Alpine first (faster), fallback to Ubuntu if it fails
+if docker build \
+    --build-arg HTTP_PROXY="" \
+    --build-arg HTTPS_PROXY="" \
+    --build-arg http_proxy="" \
+    --build-arg https_proxy="" \
+    --build-arg no_proxy="*" \
+    -f docker/Dockerfile.manual \
+    -t rocksdb-cli:latest \
+    . ; then
+    echo "✅ Successfully built rocksdb-cli:latest"
+else
+    echo "❌ Both builds failed. Please check the error messages above."
+    exit 1
+fi
 
-echo "Linux build completed!"
-echo "Executable: $BUILD_DIR/rocksdb-cli-linux-amd64"
-ls -la $BUILD_DIR/rocksdb-cli-linux-amd64 
+# Test the built image
+echo "🧪 Testing the built image..."
+if docker run --rm rocksdb-cli:latest --help >/dev/null 2>&1; then
+    echo "✅ Docker image test passed!"
+    echo ""
+    echo "🎉 Docker image 'rocksdb-cli:latest' is ready to use!"
+    echo ""
+    echo "Usage examples:"
+    echo "  # Run with a database"
+    echo "  docker run -it --rm -v \"/path/to/your/db:/data\" rocksdb-cli:latest --db /data"
+    echo ""
+    echo "  # Get help"
+    echo "  docker run --rm rocksdb-cli:latest --help"
+else
+    echo "❌ Docker image test failed"
+    exit 1
+fi 

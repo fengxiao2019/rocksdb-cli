@@ -1,0 +1,23 @@
+# Build artifacts
+build/
+coverage.out
+
+# Test databases
+testdb/
+testdb2/
+testwatch/
+
+# Git and editor files
+.git/
+.cursor/
+.cursorrules
+
+# Documentation (not needed for build)
+*.md
+.github/
+
+
+
+# System files
+.DS_Store
+*.log 

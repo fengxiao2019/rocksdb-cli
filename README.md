@@ -4,11 +4,13 @@ An interactive RocksDB command-line tool written in Go, with support for multipl
 
 ## Features
 - Interactive command-line (REPL)
-- Query by key
-- Query by prefix
+- Query by key with JSON pretty print support
+- Query by prefix and range scanning
 - Insert/Update key-value pairs
 - Multiple column family (CF) management and operations
-- JSON pretty print support for values
+- CSV export functionality
+- Real-time monitoring with watch mode
+- Docker support for easy deployment
 - Clear structure, easy to maintain and extend
 
 ## Project Structure
@@ -25,43 +27,102 @@ rocksdb-cli/
 │       └── command.go
 ├── scripts/           # Helper scripts
 │   └── gen_testdb.go  # Generate test rocksdb database
+├── Dockerfile         # Docker build configuration
+├── build_docker.sh    # Docker build script
 ├── go.mod
 └── README.md
 ```
 
 ## Installation and Build Process
 
-### Prerequisites
+### Option 1: Docker (Recommended)
+
+Docker provides the easiest way to use rocksdb-cli without dealing with native dependencies.
+
+#### Prerequisites
+- Docker installed on your system
+
+#### Building Docker Image
+```sh
+# Build Docker image (automatically detects proxy if needed)
+./build_docker.sh
+
+# Or build manually
+docker build -t rocksdb-cli .
+```
+
+#### Using Docker Image
+```sh
+# Get help
+docker run --rm rocksdb-cli --help
+
+# Interactive mode with your database
+docker run -it --rm -v "/path/to/your/db:/data" rocksdb-cli --db /data
+
+# Command-line usage
+docker run --rm -v "/path/to/your/db:/data" rocksdb-cli --db /data --last users --pretty
+
+# CSV export
+docker run --rm -v "/path/to/your/db:/data" -v "$PWD:/output" rocksdb-cli --db /data --export-cf users --export-file /output/users.csv
+
+# Watch mode
+docker run -it --rm -v "/path/to/your/db:/data" rocksdb-cli --db /data --watch logs --interval 500ms
+```
+
+#### Docker with Proxy Support
+If you're behind a corporate firewall or using a proxy, the build script automatically detects and uses your proxy settings:
+
+```sh
+# Set proxy environment variables (if needed)
+export HTTP_PROXY="http://your-proxy-server:port"
+export HTTPS_PROXY="http://your-proxy-server:port"
+
+# Build with proxy support
+./build_docker.sh
+```
+
+Alternatively, you can manually specify proxy settings:
+```sh
+# Manual proxy build
+docker build \
+    --build-arg HTTP_PROXY="http://your-proxy-server:port" \
+    --build-arg HTTPS_PROXY="http://your-proxy-server:port" \
+    -t rocksdb-cli .
+```
+
+### Option 2: Native Build
+
+For better performance or development purposes, you can build natively.
+
+#### Prerequisites
 
 RocksDB CLI requires RocksDB C++ libraries to be installed on your system.
 
-#### macOS
+##### macOS
 ```sh
 brew install rocksdb snappy lz4 zstd bzip2
 
 # Configure environment variables (add to ~/.zshrc or ~/.bash_profile)
-export CGO_CFLAGS="-I/opt/homebrew/Cellar/rocksdb/10.2.1/include"
-export CGO_LDFLAGS="-L/opt/homebrew/Cellar/rocksdb/10.2.1/lib -L/opt/homebrew/lib -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd"
+export CGO_CFLAGS="-I/opt/homebrew/Cellar/rocksdb/*/include"
+export CGO_LDFLAGS="-L/opt/homebrew/Cellar/rocksdb/*/lib -L/opt/homebrew/lib -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd"
 
 # Apply environment variables
 source ~/.zshrc
 ```
 
-> Note: Replace 10.2.1 with your actual RocksDB version.
-
-#### Linux (Ubuntu/Debian)
+##### Linux (Ubuntu/Debian)
 ```sh
 sudo apt-get update
 sudo apt-get install librocksdb-dev libsnappy-dev liblz4-dev libzstd-dev libbz2-dev build-essential
 ```
 
-#### Linux (CentOS/RHEL)
+##### Linux (CentOS/RHEL)
 ```sh
 sudo yum install rocksdb-devel snappy-devel lz4-devel libzstd-devel bzip2-devel gcc-c++
 ```
 
-#### Windows
-Windows builds require more setup due to C++ dependencies. You have several options:
+##### Windows
+For Windows, we recommend using Docker or WSL:
 
 **Option 1: Use WSL (Recommended)**
 ```bash
@@ -70,90 +131,19 @@ wsl --install
 ```
 
 **Option 2: Native Windows Build**
-1. Install [vcpkg](https://github.com/Microsoft/vcpkg):
-```cmd
-git clone https://github.com/Microsoft/vcpkg.git
-cd vcpkg
-.\bootstrap-vcpkg.bat
-```
+Requires complex setup with vcpkg and Visual Studio. Docker is much easier.
 
-2. Install RocksDB and dependencies:
-```cmd
-.\vcpkg install rocksdb:x64-windows
-.\vcpkg install snappy:x64-windows
-.\vcpkg install lz4:x64-windows
-.\vcpkg install zstd:x64-windows
-```
-
-3. Set environment variables:
-```cmd
-set CGO_CFLAGS=-I%VCPKG_ROOT%\installed\x64-windows\include
-set CGO_LDFLAGS=-L%VCPKG_ROOT%\installed\x64-windows\lib -lrocksdb -lsnappy -llz4 -lzstd
-set CGO_ENABLED=1
-```
-
-### Building Executables
-
-#### Install Dependencies
+#### Building Native Executable
 ```sh
+# Install dependencies
 go mod tidy
-```
 
-#### Quick Build (Current Platform)
-```sh
-# Using Make
+# Quick build (current platform)
+go build -o rocksdb-cli ./cmd
+
+# Or using make
 make build
-
-# Or directly with Go
-go build -o build/rocksdb-cli ./cmd
 ```
-
-#### Cross-Platform Building
-
-**Important Note**: RocksDB CLI uses CGO (C bindings), which makes cross-compilation complex. Each platform needs its native C++ libraries.
-
-**Option 1: Native Build (Recommended)**
-Build on each target platform:
-```sh
-# On any platform
-make build
-# or
-make build-native
-```
-
-**Option 2: Docker Build (Linux)**
-Build Linux executables using Docker:
-```sh
-# Build Linux executable using Docker
-make build-linux-docker
-
-# Or manually
-chmod +x scripts/build_docker.sh
-./scripts/build_docker.sh
-```
-
-**Option 3: GitHub Actions (Automated)**
-The repository includes GitHub Actions workflows that automatically build for all platforms:
-- Push to `main` branch triggers builds
-- Create a release to generate downloadable binaries
-- Artifacts are available for download from Actions tab
-
-**Option 4: Windows Build**
-On Windows systems:
-```cmd
-# After setting up vcpkg and RocksDB (see Windows prerequisites above)
-scripts\build.bat
-```
-
-#### Supported Platforms
-- **Linux**: amd64, arm64 (via Docker or native)
-- **macOS**: amd64 (Intel), arm64 (Apple Silicon) (native only)
-- **Windows**: amd64 (native with proper setup)
-
-Built executables are placed in the `build/` directory:
-- `rocksdb-cli` (current platform)
-- `rocksdb-cli-linux-amd64` (Linux)
-- `rocksdb-cli-windows-amd64.exe` (Windows)
 
 #### Running Tests
 ```sh
@@ -164,120 +154,110 @@ make test
 make test-coverage
 ```
 
-### Common Issues
-- If header or library files are not found, verify environment variable paths match installation paths.
-- If you see errors like `library 'snappy' not found`, ensure all dependencies are installed via package manager.
-- Linker warnings about duplicate libraries can be ignored, they don't affect functionality.
-- For Windows builds, ensure CGO is enabled and proper C++ toolchain is available.
-
 ## Usage
 
+### Command Line Help
+```sh
+# Show comprehensive help
+rocksdb-cli --help
+
+# Docker version
+docker run --rm rocksdb-cli --help
+```
+
 ### Interactive Mode
-1. Run: `go run cmd/main.go --db /path/to/rocksdb`
-2. Enter commands in REPL:
-
-### CSV Export Mode
-You can also export any column family to a CSV file directly from the command line:
+Start the interactive REPL:
 
 ```sh
-# Export specific column family to CSV file
-rocksdb-cli --db /path/to/rocksdb --export-cf <column_family> --export-file <output.csv>
+# Native
+rocksdb-cli --db /path/to/rocksdb
 
-# Examples
-rocksdb-cli --db ./testdb --export-cf users --export-file users.csv
-rocksdb-cli --db ./testdb --export-cf products --export-file products.csv
+# Docker
+docker run -it --rm -v "/path/to/db:/data" rocksdb-cli --db /data
 ```
 
-The CSV export includes:
-- Header row with "Key" and "Value" columns
-- All key-value pairs from the specified column family
-- Proper CSV escaping for special characters in JSON values
+### Direct Command Usage
 
-### Get Last Entry Mode
-You can retrieve the last (lexicographically largest) key-value pair from any column family:
-
+#### Get Last Entry
 ```sh
-# Get last entry from specific column family
-rocksdb-cli --db /path/to/rocksdb --last <column_family>
+# Get last entry from column family
+rocksdb-cli --db /path/to/db --last users
 
-# Examples
-rocksdb-cli --db ./testdb --last users
-rocksdb-cli --db ./testdb --last products
+# With pretty JSON formatting
+rocksdb-cli --db /path/to/db --last users --pretty
 ```
 
-### Watch Mode (Continuous Monitoring)
-Monitor a column family for new entries in real-time, similar to `ping -t`:
-
+#### CSV Export
 ```sh
-# Watch specific column family for new entries
-rocksdb-cli --db /path/to/rocksdb --watch <column_family> [--interval <duration>]
-
-# Examples
-rocksdb-cli --db ./testdb --watch users                    # Default 1s interval
-rocksdb-cli --db ./testdb --watch logs --interval 500ms    # Custom interval
-rocksdb-cli --db ./testdb --watch products --interval 2s   # 2 second interval
+# Export column family to CSV
+rocksdb-cli --db /path/to/db --export-cf users --export-file users.csv
 ```
 
-Watch mode features:
-- Shows initial last entry when starting
-- Detects and displays new entries as they are added
-- Configurable polling interval (default: 1 second)
-- Graceful shutdown with Ctrl+C
-- Timestamps for each new entry detected
+#### Watch Mode (Real-time Monitoring)
+```sh
+# Monitor column family for new entries
+rocksdb-cli --db /path/to/db --watch users
+rocksdb-cli --db /path/to/db --watch logs --interval 500ms
+```
 
-### Basic Commands
+### Interactive Commands
+
+Once in interactive mode, you can use these commands:
+
+#### Basic Operations
+```
+# Column family management
+usecf <cf>                   # Switch current column family
+listcf                       # List all column families
+createcf <cf>                # Create new column family
+dropcf <cf>                  # Drop column family
+
+# Data operations
+get [<cf>] <key> [--pretty]  # Query by key (use --pretty for JSON formatting)
+put [<cf>] <key> <value>     # Insert/Update key-value pair
+prefix [<cf>] <prefix>       # Query by key prefix
+last [<cf>] [--pretty]       # Get last key-value pair from CF
+
+# Advanced operations
+scan [<cf>] [start] [end] [options]  # Scan range with options
+export [<cf>] <file_path>    # Export CF to CSV file
+
+# Help and exit
+help                         # Show interactive help
+exit/quit                    # Exit the CLI
+```
+
+#### Command Usage Patterns
 There are two ways to use commands:
 
-1. Set current CF and use simplified commands:
+1. **Set current CF and use simplified commands:**
 ```
-usecf mycf       # Set current CF
-get key          # Use current CF
-put key value    # Use current CF
-prefix pre       # Use current CF
-```
-
-2. Explicitly specify CF in commands:
-```
-get mycf key
-put mycf key value
-prefix mycf pre
+usecf users       # Set current CF
+get user:1001     # Use current CF
+put user:1006 {"name":"Alice","age":25}
+prefix user:      # Use current CF
 ```
 
-### Command Reference
-
-#### Interactive Commands
-- `usecf <cf>`                   Switch to a column family
-- `get [<cf>] <key> [--pretty]`  Query key in CF, with optional JSON pretty print
-- `put [<cf>] <key> <value>`     Insert/Update key-value in CF
-- `prefix [<cf>] <prefix>`       Query by prefix in CF
-- `scan [<cf>] [start] [end] [options]` Scan range of keys in CF with advanced options
-- `export [<cf>] <file_path>`    Export column family data to CSV file
-- `listcf`                       List all column families
-- `createcf <cf>`                Create new column family
-- `dropcf <cf>`                  Drop column family
-- `exit` or `quit`               Exit
-
-#### Command Line Options
-- `--db <path>`                  Path to RocksDB database (required)
-- `--export-cf <cf>`             Column family to export (use with --export-file)
-- `--export-file <path>`         Output CSV file path (use with --export-cf)
-- `--last <cf>`                  Get the last key-value pair from column family
-- `--watch <cf>`                 Watch for new entries in column family (like ping -t)
-- `--interval <duration>`        Watch interval (default: 1s, use with --watch)
+2. **Explicitly specify CF in commands:**
+```
+get users user:1001
+put users user:1006 {"name":"Alice","age":25}
+prefix users user:
+```
 
 ### JSON Pretty Print
-When retrieving values that are JSON formatted, you can use the `--pretty` flag with the `get` command to format the output:
+When retrieving JSON values, use the `--pretty` flag for formatted output:
 
 ```
-# Store a JSON value
-put mycf user1 {"name":"John","age":30,"hobbies":["reading","coding"]}
+# Store JSON value
+put users user:1001 {"name":"John","age":30,"hobbies":["reading","coding"]}
 
 # Regular get (single line)
-get mycf user1
+get users user:1001
 {"name":"John","age":30,"hobbies":["reading","coding"]}
 
 # Pretty printed get
-get mycf user1 --pretty
+get users user:1001 --pretty
 {
   "name": "John",
   "age": 30,
@@ -288,87 +268,95 @@ get mycf user1 --pretty
 }
 ```
 
-If the value is not valid JSON, it will be displayed as is.
-
 ### Range Scanning
-The `scan` command provides powerful range scanning capabilities with various options:
+The `scan` command provides powerful range scanning with various options:
 
 ```
-# Basic range scan (forward)
-scan key1 key5              # Scan from key1 to key5 (exclusive)
+# Basic range scan
+scan users user:1001 user:1005
 
-# Scan with explicit column family
-scan mycf key1 key5         # Scan in specific column family
+# Scan with options
+scan users user:1001 user:1005 --reverse --limit=10 --values=no
 
-# Reverse scan
-scan key1 key5 --reverse    # Scan backwards from key5 to key1
-
-# Scan with limit
-scan key1 key5 --limit=10   # Return at most 10 results
-
-# Scan without values (keys only)
-scan key1 key5 --values=no  # Return only keys, not values
-
-# Scan from start to end of database
-scan key1                   # Scan from key1 to end
-
-# Combined options
-scan mycf key1 key5 --reverse --limit=5 --values=no
+# Available options:
+# --reverse    : Scan in reverse order
+# --limit=N    : Limit results to N entries
+# --values=no  : Return only keys without values
 ```
-
-**Scan Options:**
-- `--reverse`: Scan in reverse order (from end to start)
-- `--limit=N`: Limit results to N entries
-- `--values=no`: Return only keys without values
-
-**Range Behavior:**
-- Forward scan: includes start key, excludes end key `[start, end)`
-- Reverse scan: starts just before end key, goes backwards to start key
-- If no end key provided, scans to the end/beginning of the database
 
 ## Generate Test Database
 
-The included `gen_testdb.go` script creates a comprehensive test database with multiple column families and sample data:
+Create a comprehensive test database with sample data:
 
 ```sh
 # Generate test database
 go run scripts/gen_testdb.go ./testdb
 
-# Start the CLI with the test database
-go run cmd/main.go --db ./testdb
+# Use with CLI
+rocksdb-cli --db ./testdb
+
+# Use with Docker
+docker run -it --rm -v "$PWD/testdb:/data" rocksdb-cli --db /data
 ```
 
 The test database includes:
 - **default**: Basic key-value pairs and configuration data
-- **users**: User profiles in JSON format with different roles
-- **products**: Product information including electronics and groceries
-- **logs**: Application logs with different severity levels and metrics
+- **users**: User profiles in JSON format
+- **products**: Product information with categories
+- **logs**: Application logs with different severity levels
 
 ### Example Usage with Test Data
 
 ```sh
-# List all column families
-> listcf
+# Interactive mode
+rocksdb-cli --db ./testdb
 
-# Switch to users column family
-> usecf users
+# In REPL:
+> listcf                     # List all column families
+> usecf users               # Switch to users
+> prefix user:              # Get all users
+> get user:1001 --pretty    # Get user with JSON formatting
+> scan user:1001 user:1005  # Scan range of users
+> export users users.csv    # Export to CSV
+> usecf logs               # Switch to logs
+> watch logs --interval 1s  # Watch for new log entries
+```
 
-# Get all users with prefix
-> prefix user:
+## Docker Technical Details
 
-# Scan range of users
-> scan user:1001 user:1005
+The Docker image includes:
+- **RocksDB v10.2.1** - manually compiled for compatibility with grocksdb v1.10.1
+- **Multi-stage build** - optimized for size and security
+- **Non-root user** - runs as `rocksdb` user for security
+- **Debian bullseye** base - for compatibility and stability
 
-# Get user details with pretty JSON formatting
-> get user:1001 --pretty
+### Build Process
+1. **Build stage**: Compiles RocksDB and Go application
+2. **Runtime stage**: Minimal image with only runtime dependencies
+3. **Total build time**: ~6-7 minutes (RocksDB compilation takes most time)
+4. **Final image size**: ~200MB
 
-# Switch to products and explore
-> usecf products
-> prefix prod:
-> scan sku:ABC123 sku:GHI789 --reverse
+### Proxy Support
+The Docker build automatically handles proxy configurations:
+- Detects `HTTP_PROXY` and `HTTPS_PROXY` environment variables
+- Passes them to the build process if present
+- No manual configuration needed in most cases
 
-# View logs with different filters
-> usecf logs
-> prefix error:
-> scan 2024-01-01T10:00:00 2024-01-01T10:05:00 --limit=3
-``` 
+## Performance Notes
+
+- **Docker**: Slight overhead but consistent across platforms
+- **Native**: Best performance, platform-specific
+- **Memory**: RocksDB compilation requires ~2GB RAM in Docker
+- **Storage**: Built image is ~200MB
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch
+3. Make changes and add tests
+4. Ensure Docker build works: `./build_docker.sh`
+5. Submit a pull request
+
+## License
+
+MIT License - see LICENSE file for details 
