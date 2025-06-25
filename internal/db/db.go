@@ -2,8 +2,11 @@ package db
 
 import (
 	"encoding/csv"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/linxGnu/grocksdb"
 )
@@ -21,6 +24,7 @@ type KeyValueDB interface {
 	ScanCF(cf string, start, end []byte, opts ScanOptions) (map[string]string, error)
 	GetLastCF(cf string) (string, string, error) // Returns key, value, error
 	ExportToCSV(cf, filePath string) error
+	JSONQueryCF(cf, field, value string) (map[string]string, error) // Query by JSON field
 	ListCFs() ([]string, error)
 	CreateCF(cf string) error
 	DropCF(cf string) error
@@ -311,4 +315,71 @@ func hasPrefix(s, prefix []byte) bool {
 		}
 	}
 	return true
+}
+
+func (d *DB) JSONQueryCF(cf, field, value string) (map[string]string, error) {
+	h, ok := d.cfHandles[cf]
+	if !ok {
+		return nil, errors.New("column family not found")
+	}
+
+	it := d.db.NewIteratorCF(d.ro, h)
+	defer it.Close()
+
+	result := make(map[string]string)
+
+	for it.SeekToFirst(); it.Valid(); it.Next() {
+		k := it.Key()
+		v := it.Value()
+		keyStr := string(k.Data())
+		valueStr := string(v.Data())
+
+		// Try to parse as JSON
+		var jsonData map[string]interface{}
+		if err := json.Unmarshal([]byte(valueStr), &jsonData); err != nil {
+			// Skip non-JSON values
+			k.Free()
+			v.Free()
+			continue
+		}
+
+		// Check if the field exists and matches the value
+		if fieldValue, exists := jsonData[field]; exists {
+			var match bool
+
+			// Handle different value types
+			switch v := fieldValue.(type) {
+			case string:
+				match = v == value
+			case float64:
+				// Try to parse the input value as number
+				if numValue, err := strconv.ParseFloat(value, 64); err == nil {
+					match = v == numValue
+				}
+			case bool:
+				// Try to parse the input value as boolean
+				if boolValue, err := strconv.ParseBool(value); err == nil {
+					match = v == boolValue
+				}
+			case nil:
+				match = value == "null"
+			default:
+				// For other types, convert to string and compare
+				fieldValueStr := json.RawMessage(fmt.Sprintf("%v", v))
+				var prettyFieldValue string
+				if err := json.Unmarshal(fieldValueStr, &prettyFieldValue); err == nil {
+					match = prettyFieldValue == value
+				}
+			}
+
+			if match {
+				result[keyStr] = valueStr
+			}
+		}
+
+		k.Free()
+		v.Free()
+	}
+
+	return result, nil
 }

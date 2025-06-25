@@ -6,6 +6,7 @@ An interactive RocksDB command-line tool written in Go, with support for multipl
 - Interactive command-line (REPL)
 - Query by key with JSON pretty print support
 - Query by prefix and range scanning
+- **JSON field querying** - Search entries by JSON field values
 - Insert/Update key-value pairs
 - Multiple column family (CF) management and operations
 - CSV export functionality
@@ -220,6 +221,7 @@ last [<cf>] [--pretty]       # Get last key-value pair from CF
 
 # Advanced operations
 scan [<cf>] [start] [end] [options]  # Scan range with options
+jsonquery [<cf>] <field> <value> [--pretty]  # Query by JSON field value
 export [<cf>] <file_path>    # Export CF to CSV file
 
 # Help and exit
@@ -267,6 +269,48 @@ get users user:1001 --pretty
   ]
 }
 ```
+
+### JSON Field Querying
+The `jsonquery` command allows you to search for entries based on JSON field values:
+
+```
+# Query by string field
+jsonquery users name Alice
+Found 1 entries in 'users' where field 'name' = 'Alice':
+user:1001: {"id":1001,"name":"Alice","email":"alice@example.com","age":25}
+
+# Query by number field
+jsonquery users age 30
+Found 1 entries in 'users' where field 'age' = '30':
+user:1002: {"id":1002,"name":"Bob","age":30}
+
+# Query with explicit column family
+jsonquery products category fruit
+Found 2 entries in 'products' where field 'category' = 'fruit':
+prod:apple: {"name":"Apple","price":1.50,"category":"fruit"}
+prod:banana: {"name":"Banana","price":0.80,"category":"fruit"}
+
+# Query with pretty JSON output
+jsonquery users name Alice --pretty
+Found 1 entries in 'users' where field 'name' = 'Alice':
+user:1001: {
+  "age": 25,
+  "email": "alice@example.com",
+  "id": 1001,
+  "name": "Alice"
+}
+
+# Using current column family
+usecf logs
+jsonquery level ERROR
+Found entries where field 'level' = 'ERROR' in current CF
+```
+
+**Supported field types:**
+- **String**: Exact match (`"Alice"`)
+- **Number**: Numeric comparison (`30`, `1.5`)
+- **Boolean**: Boolean comparison (`true`, `false`)
+- **Null**: Null comparison (`null`)
 
 ### Range Scanning
 The `scan` command provides powerful range scanning with various options:
@@ -316,9 +360,12 @@ rocksdb-cli --db ./testdb
 > usecf users               # Switch to users
 > prefix user:              # Get all users
 > get user:1001 --pretty    # Get user with JSON formatting
+> jsonquery name Alice      # Find users named Alice
+> jsonquery users age 25    # Find users aged 25
 > scan user:1001 user:1005  # Scan range of users
 > export users users.csv    # Export to CSV
 > usecf logs               # Switch to logs
+> jsonquery level ERROR     # Find error logs
 > watch logs --interval 1s  # Watch for new log entries
 ```
 

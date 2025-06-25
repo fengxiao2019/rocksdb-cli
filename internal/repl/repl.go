@@ -43,6 +43,7 @@ func completer(d prompt.Document) []prompt.Suggest {
 		{Text: "scan", Description: "scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no]"},
 		{Text: "last", Description: "last [<cf>] [--pretty] Get last key-value pair from CF"},
 		{Text: "export", Description: "export [<cf>] <file_path> Export CF to CSV file"},
+		{Text: "jsonquery", Description: "jsonquery [<cf>] <field> <value> [--pretty] Query by JSON field value"},
 		{Text: "listcf", Description: "List all column families"},
 		{Text: "createcf", Description: "createcf <cf> Create new column family"},
 		{Text: "dropcf", Description: "dropcf <cf> Drop column family"},

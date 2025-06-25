@@ -383,6 +383,56 @@ func (h *Handler) Execute(input string) bool {
 			formattedValue := formatValue(value, pretty)
 			fmt.Printf("Last entry in '%s': %s = %s\n", cf, key, formattedValue)
 		}
+	case "jsonquery":
+		// Get current CF if available
+		currentCF := ""
+		if s, ok := h.State.(*ReplState); ok && s != nil {
+			currentCF = s.CurrentCF
+		}
+
+		// Parse flags and arguments
+		flags, args := parseFlags(parts[1:])
+		pretty := flags["pretty"] == "true"
+
+		var cf, field, value string
+
+		switch len(args) {
+		case 2: // jsonquery <field> <value> (using current CF)
+			if currentCF == "" {
+				fmt.Println("No current column family set")
+				return true
+			}
+			cf = currentCF
+			field = args[0]
+			value = args[1]
+		case 3: // jsonquery <cf> <field> <value>
+			cf = args[0]
+			field = args[1]
+			value = args[2]
+		default:
+			fmt.Println("Usage: jsonquery [<cf>] <field> <value> [--pretty]")
+			fmt.Println("  Query entries by JSON field value")
+			fmt.Println("  Examples:")
+			fmt.Println("    jsonquery name \"Alice\"")
+			fmt.Println("    jsonquery users name \"Alice\"")
+			fmt.Println("    jsonquery products category \"fruit\" --pretty")
+			return true
+		}
+
+		result, err := h.DB.JSONQueryCF(cf, field, value)
+		if err != nil {
+			fmt.Printf("JSON query failed: %v\n", err)
+		} else {
+			if len(result) == 0 {
+				fmt.Printf("No entries found in '%s' where field '%s' = '%s'\n", cf, field, value)
+			} else {
+				fmt.Printf("Found %d entries in '%s' where field '%s' = '%s':\n", len(result), cf, field, value)
+				for k, v := range result {
+					formattedValue := formatValue(v, pretty)
+					fmt.Printf("%s: %s\n", k, formattedValue)
+				}
+			}
+		}
 	case "help":
 		fmt.Println("Available commands:")
 		fmt.Println("  usecf <cf>                    - Switch current column family")
@@ -393,6 +443,7 @@ func (h *Handler) Execute(input string) bool {
 		fmt.Println("    Options: --limit=N --reverse --values=no")
 		fmt.Println("  last [<cf>] [--pretty]        - Get last key-value pair from CF")
 		fmt.Println("  export [<cf>] <file_path>     - Export CF to CSV file")
+		fmt.Println("  jsonquery [<cf>] <field> <value> [--pretty] - Query entries by JSON field value")
 		fmt.Println("  listcf                        - List all column families")
 		fmt.Println("  createcf <cf>                 - Create new column family")
 		fmt.Println("  dropcf <cf>                   - Drop column family")
@@ -402,6 +453,8 @@ func (h *Handler) Execute(input string) bool {
 		fmt.Println("Notes:")
 		fmt.Println("  - Commands without [<cf>] use current column family")
 		fmt.Println("  - Current column family is shown in prompt: rocksdb[current_cf]>")
+		fmt.Println("  - jsonquery searches for JSON values where field matches value exactly")
+		fmt.Println("    Example: jsonquery name \"Alice\" finds all entries where name field = \"Alice\"")
 	case "exit", "quit":
 		return false
 	default:

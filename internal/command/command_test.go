@@ -1,9 +1,11 @@
 package command
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"rocksdb-cli/internal/db"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -188,6 +190,59 @@ func (m *mockDB) ExportToCSV(cf, filePath string) error {
 }
 
 func (m *mockDB) Close() {}
+
+func (m *mockDB) JSONQueryCF(cf, field, value string) (map[string]string, error) {
+	if !m.cfExists[cf] {
+		return nil, errors.New("column family not found")
+	}
+
+	result := make(map[string]string)
+	cfData, ok := m.data[cf]
+	if !ok {
+		return result, nil
+	}
+
+	for key, val := range cfData {
+		// Try to parse as JSON
+		var jsonData map[string]interface{}
+		if err := json.Unmarshal([]byte(val), &jsonData); err != nil {
+			// Skip non-JSON values
+			continue
+		}
+
+		// Check if the field exists and matches the value
+		if fieldValue, exists := jsonData[field]; exists {
+			var match bool
+
+			// Handle different value types
+			switch v := fieldValue.(type) {
+			case string:
+				match = v == value
+			case float64:
+				// Try to parse the input value as number
+				if numValue, err := strconv.ParseFloat(value, 64); err == nil {
+					match = v == numValue
+				}
+			case bool:
+				// Try to parse the input value as boolean
+				if boolValue, err := strconv.ParseBool(value); err == nil {
+					match = v == boolValue
+				}
+			case nil:
+				match = value == "null"
+			default:
+				// For other types, convert to string and compare
+				match = fmt.Sprintf("%v", v) == value
+			}
+
+			if match {
+				result[key] = val
+			}
+		}
+	}
+
+	return result, nil
+}
 
 func TestHandler_Execute(t *testing.T) {
 	mockDB := newMockDB()
@@ -615,6 +670,92 @@ func TestHandler_Execute(t *testing.T) {
 		{
 			name:        "last nonexistent cf should fail",
 			cmd:         "last nonexistent",
+			expectError: true,
+			checkFunc: func() error {
+				// The command should handle the error gracefully
+				return nil
+			},
+		},
+		{
+			name: "jsonquery with current cf - string field",
+			cmd:  "jsonquery name Alice",
+			setupFunc: func() {
+				state.CurrentCF = "users"
+				mockDB.CreateCF("users")
+				mockDB.data["users"] = make(map[string]string)
+				mockDB.PutCF("users", "user:1001", `{"id":1001,"name":"Alice","age":25}`)
+				mockDB.PutCF("users", "user:1002", `{"id":1002,"name":"Bob","age":30}`)
+				mockDB.PutCF("users", "user:1003", `{"id":1003,"name":"Alice","age":28}`)
+			},
+			checkFunc: func() error {
+				result, err := mockDB.JSONQueryCF("users", "name", "Alice")
+				if err != nil {
+					return fmt.Errorf("JSONQueryCF failed: %v", err)
+				}
+				if len(result) != 2 {
+					return fmt.Errorf("expected 2 results, got %d", len(result))
+				}
+				// Check that both Alice entries are returned
+				if _, ok := result["user:1001"]; !ok {
+					return errors.New("user:1001 should be in results")
+				}
+				if _, ok := result["user:1003"]; !ok {
+					return errors.New("user:1003 should be in results")
+				}
+				return nil
+			},
+		},
+		{
+			name: "jsonquery with explicit cf - number field",
+			cmd:  "jsonquery users age 30",
+			setupFunc: func() {
+				// Data already set up in previous test
+			},
+			checkFunc: func() error {
+				result, err := mockDB.JSONQueryCF("users", "age", "30")
+				if err != nil {
+					return fmt.Errorf("JSONQueryCF failed: %v", err)
+				}
+				if len(result) != 1 {
+					return fmt.Errorf("expected 1 result, got %d", len(result))
+				}
+				if _, ok := result["user:1002"]; !ok {
+					return errors.New("user:1002 should be in results")
+				}
+				return nil
+			},
+		},
+		{
+			name: "jsonquery with pretty flag",
+			cmd:  "jsonquery users name Bob --pretty",
+			checkFunc: func() error {
+				result, err := mockDB.JSONQueryCF("users", "name", "Bob")
+				if err != nil {
+					return fmt.Errorf("JSONQueryCF failed: %v", err)
+				}
+				if len(result) != 1 {
+					return fmt.Errorf("expected 1 result, got %d", len(result))
+				}
+				return nil
+			},
+		},
+		{
+			name: "jsonquery no results",
+			cmd:  "jsonquery users name Charlie",
+			checkFunc: func() error {
+				result, err := mockDB.JSONQueryCF("users", "name", "Charlie")
+				if err != nil {
+					return fmt.Errorf("JSONQueryCF failed: %v", err)
+				}
+				if len(result) != 0 {
+					return fmt.Errorf("expected 0 results, got %d", len(result))
+				}
+				return nil
+			},
+		},
+		{
+			name:        "jsonquery nonexistent cf should fail",
+			cmd:         "jsonquery nonexistent name Alice",
 			expectError: true,
 			checkFunc: func() error {
 				// The command should handle the error gracefully
