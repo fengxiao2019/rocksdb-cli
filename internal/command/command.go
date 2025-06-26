@@ -6,6 +6,7 @@ import (
 	"rocksdb-cli/internal/db"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type ReplState struct {
@@ -27,6 +28,41 @@ func prettyPrintJSON(val string) string {
 		return val // If can't pretty print, return as is
 	}
 	return string(prettyJSON)
+}
+
+// parseTimestamp attempts to parse a key as a timestamp and return formatted UTC time
+// Supports various timestamp formats: Unix seconds, Unix milliseconds, Unix microseconds, Unix nanoseconds
+func parseTimestamp(key string) string {
+	// Try to parse as integer timestamp
+	if ts, err := strconv.ParseInt(key, 10, 64); err == nil {
+		var t time.Time
+
+		// Determine timestamp format based on number of digits
+		switch {
+		case ts > 1e15: // Nanoseconds (16+ digits)
+			t = time.Unix(0, ts)
+		case ts > 1e12: // Microseconds (13-15 digits)
+			t = time.Unix(0, ts*1000)
+		case ts > 1e9: // Milliseconds (10-12 digits)
+			t = time.Unix(0, ts*1e6)
+		case ts > 1e6: // Seconds (7-9 digits, covers years ~1973-2033)
+			t = time.Unix(ts, 0)
+		default:
+			return "" // Too small to be a reasonable timestamp
+		}
+
+		return t.UTC().Format("2006-01-02 15:04:05 UTC")
+	}
+
+	// Try to parse as float timestamp (seconds with fractional part)
+	if ts, err := strconv.ParseFloat(key, 64); err == nil {
+		if ts > 1e6 && ts < 1e12 { // Reasonable range for Unix timestamp in seconds
+			t := time.Unix(int64(ts), int64((ts-float64(int64(ts)))*1e9))
+			return t.UTC().Format("2006-01-02 15:04:05 UTC")
+		}
+	}
+
+	return "" // Not a timestamp
 }
 
 func parseFlags(args []string) (map[string]string, []string) {
@@ -118,34 +154,65 @@ func (h *Handler) Execute(input string) bool {
 		// Parse column family and range
 		switch len(args) {
 		case 0: // scan (no args)
-			fmt.Println("Usage: scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no]")
+			fmt.Println("Usage: scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no] [--timestamp]")
+			fmt.Println("  Use * as wildcard to scan all entries (e.g., scan * or scan * *)")
 			return true
-		case 1: // scan <start> (using current CF)
+		case 1: // scan <start> (using current CF) or scan * (scan all)
 			if currentCF == "" {
 				fmt.Println("No current column family set")
 				return true
 			}
 			cf = currentCF
-			start = []byte(args[0])
+			// Handle * wildcard to scan all entries
+			if args[0] == "*" {
+				// Leave start and end as nil to scan all entries
+				start = nil
+				end = nil
+			} else {
+				start = []byte(args[0])
+			}
 		case 2:
 			// Check if first arg is likely a CF name by checking if it exists
 			// If we can't determine, prefer using current CF with start/end pattern
 			if currentCF != "" {
 				// scan <start> <end> (using current CF)
 				cf = currentCF
-				start = []byte(args[0])
-				end = []byte(args[1])
+				// Handle * wildcards
+				if args[0] == "*" {
+					start = nil
+				} else {
+					start = []byte(args[0])
+				}
+				if args[1] == "*" {
+					end = nil
+				} else {
+					end = []byte(args[1])
+				}
 			} else {
 				// scan <cf> <start> (no current CF set)
 				cf = args[0]
-				start = []byte(args[1])
+				if args[1] == "*" {
+					start = nil
+				} else {
+					start = []byte(args[1])
+				}
 			}
 		case 3: // scan <cf> <start> <end>
 			cf = args[0]
-			start = []byte(args[1])
-			end = []byte(args[2])
+			// Handle * wildcards
+			if args[1] == "*" {
+				start = nil
+			} else {
+				start = []byte(args[1])
+			}
+			if args[2] == "*" {
+				end = nil
+			} else {
+				end = []byte(args[2])
+			}
 		default:
-			fmt.Println("Usage: scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no]")
+			fmt.Println("Usage: scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no] [--timestamp]")
+			fmt.Println("  Use * as wildcard to scan all entries (e.g., scan * or scan * *)")
 			return true
 		}
 
@@ -171,15 +238,34 @@ func (h *Handler) Execute(input string) bool {
 			opts.Values = false
 		}
 
+		// Check for timestamp flag
+		showTimestamp := flags["timestamp"] == "true"
+
 		result, err := h.DB.ScanCF(cf, start, end, opts)
 		if err != nil {
 			fmt.Printf("Scan failed: %v\n", err)
 		} else {
 			for k, v := range result {
-				if opts.Values {
-					fmt.Printf("%s: %s\n", k, v)
+				if showTimestamp {
+					if timestamp := parseTimestamp(k); timestamp != "" {
+						if opts.Values {
+							fmt.Printf("%s (%s): %s\n", k, timestamp, v)
+						} else {
+							fmt.Printf("%s (%s)\n", k, timestamp)
+						}
+					} else {
+						if opts.Values {
+							fmt.Printf("%s: %s\n", k, v)
+						} else {
+							fmt.Printf("%s\n", k)
+						}
+					}
 				} else {
-					fmt.Printf("%s\n", k)
+					if opts.Values {
+						fmt.Printf("%s: %s\n", k, v)
+					} else {
+						fmt.Printf("%s\n", k)
+					}
 				}
 			}
 		}
@@ -440,7 +526,8 @@ func (h *Handler) Execute(input string) bool {
 		fmt.Println("  put [<cf>] <key> <value>      - Insert/Update key-value pair")
 		fmt.Println("  prefix [<cf>] <prefix>        - Query by key prefix")
 		fmt.Println("  scan [<cf>] [start] [end]     - Scan range with options")
-		fmt.Println("    Options: --limit=N --reverse --values=no")
+		fmt.Println("    Options: --limit=N --reverse --values=no --timestamp")
+		fmt.Println("    Use * as wildcard to scan all entries (e.g., scan * or scan * *)")
 		fmt.Println("  last [<cf>] [--pretty]        - Get last key-value pair from CF")
 		fmt.Println("  export [<cf>] <file_path>     - Export CF to CSV file")
 		fmt.Println("  jsonquery [<cf>] <field> <value> [--pretty] - Query entries by JSON field value")

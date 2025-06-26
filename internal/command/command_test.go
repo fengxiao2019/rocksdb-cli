@@ -564,6 +564,81 @@ func TestHandler_Execute(t *testing.T) {
 			},
 		},
 		{
+			name: "scan * wildcard with current cf",
+			cmd:  "scan *",
+			setupFunc: func() {
+				state.CurrentCF = "default"
+				// Clear default CF and set up test data
+				mockDB.data["default"] = make(map[string]string)
+				mockDB.PutCF("default", "key1", "v1")
+				mockDB.PutCF("default", "key2", "v2")
+				mockDB.PutCF("default", "key3", "v3")
+			},
+			checkFunc: func() error {
+				// This should scan all entries in default CF
+				res, err := mockDB.ScanCF("default", nil, nil, db.ScanOptions{Values: true})
+				if err != nil {
+					return fmt.Errorf("scan * with current cf failed: %v", err)
+				}
+				if len(res) != 3 {
+					return fmt.Errorf("expected 3 results, got %d", len(res))
+				}
+				for i := 1; i <= 3; i++ {
+					key := fmt.Sprintf("key%d", i)
+					if _, ok := res[key]; !ok {
+						return fmt.Errorf("expected key %s not found in results", key)
+					}
+				}
+				return nil
+			},
+		},
+		{
+			name: "scan * * wildcard range with current cf",
+			cmd:  "scan * *",
+			setupFunc: func() {
+				state.CurrentCF = "default"
+				// Data should already be set from previous test
+			},
+			checkFunc: func() error {
+				// This should scan all entries in default CF (both start and end are nil)
+				res, err := mockDB.ScanCF("default", nil, nil, db.ScanOptions{Values: true})
+				if err != nil {
+					return fmt.Errorf("scan * * with current cf failed: %v", err)
+				}
+				if len(res) != 3 {
+					return fmt.Errorf("expected 3 results, got %d", len(res))
+				}
+				return nil
+			},
+		},
+		{
+			name: "scan testcf * wildcard with explicit cf",
+			cmd:  "scan testcf *",
+			setupFunc: func() {
+				mockDB.CreateCF("testcf")
+				mockDB.data["testcf"] = make(map[string]string)
+				mockDB.PutCF("testcf", "a", "va")
+				mockDB.PutCF("testcf", "b", "vb")
+			},
+			checkFunc: func() error {
+				// This should scan all entries in testcf
+				res, err := mockDB.ScanCF("testcf", nil, nil, db.ScanOptions{Values: true})
+				if err != nil {
+					return fmt.Errorf("scan with cf * failed: %v", err)
+				}
+				if len(res) != 2 {
+					return fmt.Errorf("expected 2 results, got %d", len(res))
+				}
+				if _, ok := res["a"]; !ok {
+					return errors.New("expected key 'a' not found")
+				}
+				if _, ok := res["b"]; !ok {
+					return errors.New("expected key 'b' not found")
+				}
+				return nil
+			},
+		},
+		{
 			name: "export with current cf",
 			cmd:  "export test_export.csv",
 			setupFunc: func() {
