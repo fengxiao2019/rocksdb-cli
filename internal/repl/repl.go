@@ -2,6 +2,8 @@ package repl
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"rocksdb-cli/internal/command"
 	"rocksdb-cli/internal/db"
 
@@ -17,6 +19,10 @@ func Start(rdb db.KeyValueDB) {
 		func(in string) {
 			if !handler.Execute(in) {
 				fmt.Println("Bye.")
+				// Only fix terminal on WSL
+				if isWSL() {
+					fixWSLTerminal()
+				}
 				// Exit REPL
 				panic("exit")
 			}
@@ -32,6 +38,26 @@ func Start(rdb db.KeyValueDB) {
 		}
 	}()
 	p.Run()
+}
+
+// isWSL checks if we're running in Windows Subsystem for Linux
+func isWSL() bool {
+	return os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("WSLENV") != ""
+}
+
+// fixWSLTerminal restores terminal input visibility for WSL
+func fixWSLTerminal() {
+	// Method 1: Use reset command (most effective for WSL)
+	cmd := exec.Command("reset")
+	_ = cmd.Run()
+
+	// Method 2: Ensure echo is enabled
+	cmd = exec.Command("stty", "echo")
+	_ = cmd.Run()
+
+	// Method 3: Send terminal escape sequence to restore echo
+	fmt.Print("\033[?25h") // Show cursor
+	fmt.Print("\033[0m")   // Reset attributes
 }
 
 func completer(d prompt.Document) []prompt.Suggest {
