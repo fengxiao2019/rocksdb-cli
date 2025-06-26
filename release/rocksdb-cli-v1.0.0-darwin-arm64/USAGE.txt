@@ -1,0 +1,14 @@
+RocksDB CLI v1.0.0
+
+Quick Start:
+1. Ensure RocksDB C++ libraries are installed on your system
+2. Run: ./rocksdb-cli --db /path/to/your/rocksdb
+
+For detailed installation instructions, see README.md
+
+Examples:
+  ./rocksdb-cli --db ./testdb                    # Interactive mode
+  ./rocksdb-cli --db ./testdb --last users       # Get last entry
+  ./rocksdb-cli --db ./testdb --watch logs       # Watch for new entries
+
+For more information: https://github.com/your-repo/rocksdb-cli
