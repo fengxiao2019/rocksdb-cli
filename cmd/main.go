@@ -26,6 +26,7 @@ DESCRIPTION:
 
 OPTIONS:
     --db <path>                  Path to RocksDB database (required)
+    --read-only                  Open database in read-only mode (safe for concurrent access)
     --last <cf>                  Get the last key-value pair from column family
     --pretty                     Pretty print JSON values (use with --last)
     --export-cf <cf>             Column family to export (use with --export-file)
@@ -38,8 +39,11 @@ EXAMPLES:
     # Start interactive mode
     rocksdb-cli --db /path/to/db
 
-    # Get last entry from a column family
-    rocksdb-cli --db /path/to/db --last users
+    # Start in read-only mode (safe for concurrent access)
+    rocksdb-cli --db /path/to/db --read-only
+
+    # Get last entry from a column family in read-only mode
+    rocksdb-cli --db /path/to/db --read-only --last users
 
     # Get last entry with pretty-printed JSON
     rocksdb-cli --db /path/to/db --last users --pretty
@@ -67,6 +71,7 @@ INTERACTIVE COMMANDS:
     exit/quit                    Exit the CLI
 
     Note: Commands without [<cf>] use current column family shown in prompt
+    Note: Write operations (put, createcf, dropcf) are disabled in read-only mode
 
 SCAN OPTIONS:
     --limit=N                    Limit number of results
@@ -107,6 +112,7 @@ func main() {
 	watchCF := flag.String("watch", "", "Watch for new entries in column family (like ping -t)")
 	watchInterval := flag.Duration("interval", 1*time.Second, "Watch interval (default: 1s)")
 	helpFlag := flag.Bool("help", false, "Show help message")
+	readOnlyFlag := flag.Bool("read-only", false, "Open database in read-only mode (safe for concurrent access)")
 	flag.Parse()
 
 	// Show help if requested
@@ -122,7 +128,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	rdb, err := db.Open(*dbPath)
+	var rdb db.KeyValueDB
+	var err error
+	if *readOnlyFlag {
+		rdb, err = db.OpenReadOnly(*dbPath)
+	} else {
+		rdb, err = db.Open(*dbPath)
+	}
 	if err != nil {
 		fmt.Printf("Failed to open database: %v\n", err)
 		os.Exit(1)

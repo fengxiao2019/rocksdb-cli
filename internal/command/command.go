@@ -539,7 +539,15 @@ func (h *Handler) Execute(input string) bool {
 		fmt.Println("")
 		fmt.Println("Notes:")
 		fmt.Println("  - Commands without [<cf>] use current column family")
-		fmt.Println("  - Current column family is shown in prompt: rocksdb[current_cf]>")
+
+		// Check if we're in read-only mode and show appropriate message
+		if h.DB.IsReadOnly() {
+			fmt.Println("  - Database is in READ-ONLY mode")
+			fmt.Println("  - Write operations (put, createcf, dropcf) are disabled")
+		} else {
+			fmt.Println("  - Current column family is shown in prompt: rocksdb[current_cf]>")
+		}
+
 		fmt.Println("  - jsonquery searches for JSON values where field matches value exactly")
 		fmt.Println("    Example: jsonquery name \"Alice\" finds all entries where name field = \"Alice\"")
 	case "exit", "quit":

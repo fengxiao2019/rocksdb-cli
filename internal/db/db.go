@@ -28,6 +28,7 @@ type KeyValueDB interface {
 	ListCFs() ([]string, error)
 	CreateCF(cf string) error
 	DropCF(cf string) error
+	IsReadOnly() bool
 	Close()
 }
 
@@ -36,9 +37,18 @@ type DB struct {
 	cfHandles map[string]*grocksdb.ColumnFamilyHandle
 	ro        *grocksdb.ReadOptions
 	wo        *grocksdb.WriteOptions
+	readOnly  bool
 }
 
 func Open(path string) (*DB, error) {
+	return OpenWithOptions(path, false)
+}
+
+func OpenReadOnly(path string) (*DB, error) {
+	return OpenWithOptions(path, true)
+}
+
+func OpenWithOptions(path string, readOnly bool) (*DB, error) {
 	cfNames, err := grocksdb.ListColumnFamilies(grocksdb.NewDefaultOptions(), path)
 	if err != nil || len(cfNames) == 0 {
 		cfNames = []string{"default"}
@@ -50,7 +60,19 @@ func Open(path string) (*DB, error) {
 	for i := range cfNames {
 		cfOpts[i] = grocksdb.NewDefaultOptions()
 	}
-	db, cfHandles, err := grocksdb.OpenDbColumnFamilies(opts, path, cfNames, cfOpts)
+
+	var db *grocksdb.DB
+	var cfHandles []*grocksdb.ColumnFamilyHandle
+
+	if readOnly {
+		// Use read-only mode - don't create missing column families in read-only mode
+		opts.SetCreateIfMissing(false)
+		opts.SetCreateIfMissingColumnFamilies(false)
+		db, cfHandles, err = grocksdb.OpenDbForReadOnlyColumnFamilies(opts, path, cfNames, cfOpts, false)
+	} else {
+		db, cfHandles, err = grocksdb.OpenDbColumnFamilies(opts, path, cfNames, cfOpts)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -63,6 +85,7 @@ func Open(path string) (*DB, error) {
 		cfHandles: cfHandleMap,
 		ro:        grocksdb.NewDefaultReadOptions(),
 		wo:        grocksdb.NewDefaultWriteOptions(),
+		readOnly:  readOnly,
 	}, nil
 }
 
@@ -92,6 +115,9 @@ func (d *DB) GetCF(cf, key string) (string, error) {
 }
 
 func (d *DB) PutCF(cf, key, value string) error {
+	if d.readOnly {
+		return errors.New("read-only mode")
+	}
 	h, ok := d.cfHandles[cf]
 	if !ok {
 		return errors.New("column family not found")
@@ -218,6 +244,9 @@ func (d *DB) ListCFs() ([]string, error) {
 }
 
 func (d *DB) CreateCF(cf string) error {
+	if d.readOnly {
+		return errors.New("cannot create column family in read-only mode")
+	}
 	h, err := d.db.CreateColumnFamily(grocksdb.NewDefaultOptions(), cf)
 	if err != nil {
 		return err
@@ -227,6 +256,9 @@ func (d *DB) CreateCF(cf string) error {
 }
 
 func (d *DB) DropCF(cf string) error {
+	if d.readOnly {
+		return errors.New("cannot drop column family in read-only mode")
+	}
 	h, ok := d.cfHandles[cf]
 	if !ok {
 		return errors.New("column family not found")
@@ -382,4 +414,8 @@ func (d *DB) JSONQueryCF(cf, field, value string) (map[string]string, error) {
 	}
 
 	return result, nil
+}
+
+func (d *DB) IsReadOnly() bool {
+	return d.readOnly
 }

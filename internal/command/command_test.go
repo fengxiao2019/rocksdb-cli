@@ -191,6 +191,10 @@ func (m *mockDB) ExportToCSV(cf, filePath string) error {
 
 func (m *mockDB) Close() {}
 
+func (m *mockDB) IsReadOnly() bool {
+	return false // Mock DB is always read-write for testing
+}
+
 func (m *mockDB) JSONQueryCF(cf, field, value string) (map[string]string, error) {
 	if !m.cfExists[cf] {
 		return nil, errors.New("column family not found")
