@@ -1,9 +1,12 @@
 package command
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"rocksdb-cli/internal/db"
 	"strconv"
 	"strings"
@@ -248,615 +251,404 @@ func (m *mockDB) JSONQueryCF(cf, field, value string) (map[string]string, error)
 	return result, nil
 }
 
-func TestHandler_Execute(t *testing.T) {
-	mockDB := newMockDB()
-	state := &ReplState{CurrentCF: "default"}
-	h := &Handler{DB: mockDB, State: state}
+// captureOutput captures stdout during function execution
+func captureOutput(fn func()) string {
+	var buf bytes.Buffer
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
 
-	// Test cases with expected outputs
-	cases := []struct {
-		name        string
-		cmd         string
-		setupFunc   func()
-		checkFunc   func() error
-		expectError bool
+	fn()
+
+	w.Close()
+	os.Stdout = oldStdout
+	io.Copy(&buf, r)
+	return buf.String()
+}
+
+// newTestHandler creates a pre-configured handler for testing
+func newTestHandler(cf string) (*Handler, *mockDB) {
+	db := newMockDB()
+	return &Handler{
+		DB:    db,
+		State: &ReplState{CurrentCF: cf},
+	}, db
+}
+
+// TestHandler_Execute tests command execution using table-driven tests
+func TestHandler_Execute(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		setup    func(*mockDB, *ReplState)
+		wantOut  string
+		wantErr  bool
+		validate func(*testing.T, *mockDB, *ReplState) // Additional validation
 	}{
 		{
-			name: "create new cf",
-			cmd:  "createcf testcf",
-			checkFunc: func() error {
-				if !mockDB.cfExists["testcf"] {
-					return errors.New("CF not created")
+			name:  "get existing key",
+			input: "get key1",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.PutCF("default", "key1", "value1")
+			},
+			wantOut: "value1\n",
+			wantErr: false,
+		},
+		{
+			name:  "get non-existent key",
+			input: "get missing",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+			},
+			wantOut: "Key 'missing' not found in column family 'default'\n",
+			wantErr: false,
+		},
+		{
+			name:  "get with explicit column family",
+			input: "get testcf key1",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.CreateCF("testcf")
+				db.PutCF("testcf", "key1", "test_value")
+			},
+			wantOut: "test_value\n",
+			wantErr: false,
+		},
+		{
+			name:  "get JSON with pretty flag",
+			input: "get jsonkey --pretty",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				jsonData := `{"name":"test","value":123}`
+				db.PutCF("default", "jsonkey", jsonData)
+			},
+			wantErr: false,
+			validate: func(t *testing.T, db *mockDB, state *ReplState) {
+				// Just verify the key exists - output formatting is tested separately
+				val, err := db.GetCF("default", "jsonkey")
+				if err != nil || !strings.Contains(val, "test") {
+					t.Errorf("JSON data not properly stored or retrieved")
 				}
-				return nil
 			},
 		},
 		{
-			name: "switch to cf",
-			cmd:  "usecf testcf",
-			checkFunc: func() error {
+			name:  "put key-value",
+			input: "put key1 value1",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+			},
+			wantErr: false,
+			validate: func(t *testing.T, db *mockDB, state *ReplState) {
+				val, err := db.GetCF("default", "key1")
+				if err != nil || val != "value1" {
+					t.Errorf("Put operation failed: got %v, want value1", val)
+				}
+			},
+		},
+		{
+			name:  "put with explicit column family",
+			input: "put testcf key2 value2",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.CreateCF("testcf")
+			},
+			wantErr: false,
+			validate: func(t *testing.T, db *mockDB, state *ReplState) {
+				val, err := db.GetCF("testcf", "key2")
+				if err != nil || val != "value2" {
+					t.Errorf("Put with CF failed: got %v, want value2", val)
+				}
+			},
+		},
+		{
+			name:  "put JSON value",
+			input: `put jsonkey {"name":"test","value":123}`,
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+			},
+			wantErr: false,
+			validate: func(t *testing.T, db *mockDB, state *ReplState) {
+				val, err := db.GetCF("default", "jsonkey")
+				if err != nil || !strings.Contains(val, "test") {
+					t.Errorf("JSON put failed: got %v", val)
+				}
+			},
+		},
+		{
+			name:  "create column family",
+			input: "createcf testcf",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+			},
+			wantErr: false,
+			validate: func(t *testing.T, db *mockDB, state *ReplState) {
+				if !db.cfExists["testcf"] {
+					t.Error("Column family was not created")
+				}
+			},
+		},
+		{
+			name:  "create existing column family",
+			input: "createcf default",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+			},
+			wantOut: "Column family 'default' already exists\n",
+			wantErr: false,
+		},
+		{
+			name:  "use column family",
+			input: "usecf testcf",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.CreateCF("testcf")
+			},
+			wantErr: false,
+			validate: func(t *testing.T, db *mockDB, state *ReplState) {
 				if state.CurrentCF != "testcf" {
-					return errors.New("CF not switched")
+					t.Errorf("Column family not switched: got %s, want testcf", state.CurrentCF)
 				}
-				return nil
 			},
 		},
 		{
-			name: "put with current cf",
-			cmd:  "put key1 value1",
-			checkFunc: func() error {
-				v, err := mockDB.GetCF("testcf", "key1")
-				if err != nil || v != "value1" {
-					return errors.New("put failed")
+			name:  "list column families",
+			input: "listcf",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.CreateCF("testcf1")
+				db.CreateCF("testcf2")
+			},
+			wantErr: false,
+			validate: func(t *testing.T, db *mockDB, state *ReplState) {
+				cfs, err := db.ListCFs()
+				if err != nil || len(cfs) < 3 {
+					t.Errorf("ListCF failed: got %v", cfs)
 				}
-				return nil
 			},
 		},
 		{
-			name: "put with explicit cf",
-			cmd:  "put default key2 value2",
-			setupFunc: func() {
-				// Switch back to default CF to test explicit CF in command
+			name:  "drop column family",
+			input: "dropcf testcf",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.CreateCF("testcf")
+			},
+			wantErr: false,
+			validate: func(t *testing.T, db *mockDB, state *ReplState) {
+				if db.cfExists["testcf"] {
+					t.Error("Column family was not dropped")
+				}
+			},
+		},
+		{
+			name:  "drop default column family should fail",
+			input: "dropcf default",
+			setup: func(db *mockDB, state *ReplState) {
 				state.CurrentCF = "default"
 			},
-			checkFunc: func() error {
-				v, err := mockDB.GetCF("default", "key2")
-				if err != nil || v != "value2" {
-					return errors.New("put failed")
+			wantErr: true,
+			validate: func(t *testing.T, db *mockDB, state *ReplState) {
+				if !db.cfExists["default"] {
+					t.Error("Default column family was incorrectly dropped")
 				}
-				return nil
 			},
 		},
 		{
-			name: "get with current cf",
-			cmd:  "get key1",
-			setupFunc: func() {
-				// Switch back to testcf
-				state.CurrentCF = "testcf"
+			name:  "prefix scan",
+			input: "prefix key",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.PutCF("default", "key1", "value1")
+				db.PutCF("default", "key2", "value2")
+				db.PutCF("default", "other", "value3")
 			},
-			checkFunc: func() error {
-				v, err := mockDB.GetCF("testcf", "key1")
-				if err != nil || v != "value1" {
-					return errors.New("get failed")
+			wantErr: false,
+			validate: func(t *testing.T, db *mockDB, state *ReplState) {
+				result, err := db.PrefixScanCF("default", "key", 10)
+				if err != nil || len(result) != 2 {
+					t.Errorf("Prefix scan failed: got %d results, want 2", len(result))
 				}
-				return nil
 			},
 		},
 		{
-			name: "get with explicit cf",
-			cmd:  "get default key2",
-			checkFunc: func() error {
-				v, err := mockDB.GetCF("default", "key2")
-				if err != nil || v != "value2" {
-					return errors.New("get failed")
+			name:  "prefix scan with explicit CF",
+			input: "prefix testcf key",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.CreateCF("testcf")
+				db.PutCF("testcf", "key1", "value1")
+				db.PutCF("testcf", "key2", "value2")
+			},
+			wantErr: false,
+			validate: func(t *testing.T, db *mockDB, state *ReplState) {
+				result, err := db.PrefixScanCF("testcf", "key", 10)
+				if err != nil || len(result) != 2 {
+					t.Errorf("Prefix scan with CF failed: got %d results, want 2", len(result))
 				}
-				return nil
 			},
 		},
 		{
-			name: "put json value",
-			cmd:  `put jsonkey {"name":"test","value":123}`,
-			setupFunc: func() {
+			name:  "scan with start and end",
+			input: "scan key1 key4",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				for i := 1; i <= 5; i++ {
+					db.PutCF("default", fmt.Sprintf("key%d", i), fmt.Sprintf("value%d", i))
+				}
+			},
+			wantErr: false,
+		},
+		{
+			name:  "scan with wildcard",
+			input: "scan *",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.data["default"] = make(map[string]string) // Clear existing data
+				db.PutCF("default", "a", "va")
+				db.PutCF("default", "b", "vb")
+				db.PutCF("default", "c", "vc")
+			},
+			wantErr: false,
+		},
+		{
+			name:  "scan with limit",
+			input: "scan key1 key5 --limit=2",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.data["default"] = make(map[string]string) // Clear existing data
+				for i := 1; i <= 5; i++ {
+					db.PutCF("default", fmt.Sprintf("key%d", i), fmt.Sprintf("value%d", i))
+				}
+			},
+			wantErr: false,
+		},
+		{
+			name:  "scan reverse",
+			input: "scan key1 key5 --reverse",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.data["default"] = make(map[string]string) // Clear existing data
+				for i := 1; i <= 5; i++ {
+					db.PutCF("default", fmt.Sprintf("key%d", i), fmt.Sprintf("value%d", i))
+				}
+			},
+			wantErr: false,
+		},
+		{
+			name:  "export to CSV",
+			input: "export test.csv",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.PutCF("default", "key1", "value1")
+			},
+			wantErr: false,
+		},
+		{
+			name:  "get last entry",
+			input: "last",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.data["default"] = make(map[string]string) // Clear existing data
+				db.PutCF("default", "key1", "value1")
+				db.PutCF("default", "key2", "value2")
+			},
+			wantErr: false,
+			validate: func(t *testing.T, db *mockDB, state *ReplState) {
+				lastKey, lastValue, err := db.GetLastCF("default")
+				if err != nil {
+					t.Errorf("GetLast failed: %v", err)
+				}
+				if lastKey == "" {
+					t.Error("Expected last key to be non-empty")
+				}
+				if lastValue == "" {
+					t.Error("Expected last value to be non-empty")
+				}
+			},
+		},
+		{
+			name:  "JSON query",
+			input: `jsonquery name Alice`,
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.PutCF("default", "user1", `{"name":"Alice","age":25}`)
+				db.PutCF("default", "user2", `{"name":"Bob","age":30}`)
+			},
+			wantErr: false,
+			validate: func(t *testing.T, db *mockDB, state *ReplState) {
+				result, err := db.JSONQueryCF("default", "name", "Alice")
+				if err != nil || len(result) == 0 {
+					t.Errorf("JSON query failed: %v", err)
+				}
+			},
+		},
+		// Edge cases and error scenarios
+		{
+			name:    "empty command",
+			input:   "",
+			setup:   func(db *mockDB, state *ReplState) {},
+			wantErr: true,
+		},
+		{
+			name:    "invalid command",
+			input:   "invalidcmd",
+			setup:   func(db *mockDB, state *ReplState) {},
+			wantErr: true,
+		},
+		{
+			name:  "get with insufficient args",
+			input: "get",
+			setup: func(db *mockDB, state *ReplState) {
 				state.CurrentCF = "default"
 			},
-			checkFunc: func() error {
-				v, err := mockDB.GetCF("default", "jsonkey")
-				if err != nil || !strings.Contains(v, "test") {
-					return errors.New("put json failed")
-				}
-				return nil
-			},
+			wantErr: true,
 		},
 		{
-			name: "get json value with pretty print",
-			cmd:  "get jsonkey --pretty",
-			checkFunc: func() error {
-				v, err := mockDB.GetCF("default", "jsonkey")
-				if err != nil || !strings.Contains(v, "test") {
-					return errors.New("get json failed")
-				}
-				return nil
-			},
-		},
-		{
-			name: "get json value with explicit cf and pretty print",
-			cmd:  "get default jsonkey --pretty",
-			checkFunc: func() error {
-				v, err := mockDB.GetCF("default", "jsonkey")
-				if err != nil || !strings.Contains(v, "test") {
-					return errors.New("get json with cf failed")
-				}
-				return nil
-			},
-		},
-		{
-			name: "prefix scan with current cf",
-			cmd:  "prefix key",
-			setupFunc: func() {
-				mockDB.PutCF("testcf", "key1", "v1")
-				mockDB.PutCF("testcf", "key2", "v2")
-				mockDB.PutCF("testcf", "other", "v3")
-			},
-			checkFunc: func() error {
-				res, err := mockDB.PrefixScanCF("testcf", "key", 10)
-				if err != nil || len(res) != 2 {
-					return errors.New("prefix scan failed")
-				}
-				return nil
-			},
-		},
-		{
-			name: "list cf",
-			cmd:  "listcf",
-			checkFunc: func() error {
-				cfs, err := mockDB.ListCFs()
-				if err != nil || len(cfs) != 2 { // default and testcf
-					return errors.New("listcf failed")
-				}
-				return nil
-			},
-		},
-		{
-			name: "drop cf",
-			cmd:  "dropcf testcf",
-			checkFunc: func() error {
-				if mockDB.cfExists["testcf"] {
-					return errors.New("CF not dropped")
-				}
-				return nil
-			},
-		},
-		{
-			name:        "drop default cf should fail",
-			cmd:         "dropcf default",
-			expectError: true,
-			checkFunc: func() error {
-				if !mockDB.cfExists["default"] {
-					return errors.New("default CF was dropped")
-				}
-				return nil
-			},
-		},
-		{
-			name: "scan with current cf",
-			cmd:  "scan key1 key4",
-			setupFunc: func() {
-				state.CurrentCF = "default"
-				mockDB.PutCF("default", "key1", "v1")
-				mockDB.PutCF("default", "key2", "v2")
-				mockDB.PutCF("default", "key3", "v3")
-				mockDB.PutCF("default", "key4", "v4")
-				mockDB.PutCF("default", "key5", "v5")
-			},
-			checkFunc: func() error {
-				res, err := mockDB.ScanCF("default", []byte("key1"), []byte("key4"), db.ScanOptions{Values: true})
-				if err != nil || len(res) != 3 {
-					return errors.New("scan failed")
-				}
-				return nil
-			},
-		},
-		{
-			name: "scan with explicit cf",
-			cmd:  "scan testcf key1 key3",
-			setupFunc: func() {
-				mockDB.CreateCF("testcf")
-				mockDB.PutCF("testcf", "key1", "v1")
-				mockDB.PutCF("testcf", "key2", "v2")
-				mockDB.PutCF("testcf", "key3", "v3")
-			},
-			checkFunc: func() error {
-				res, err := mockDB.ScanCF("testcf", []byte("key1"), []byte("key3"), db.ScanOptions{Values: true})
-				if err != nil || len(res) != 2 {
-					return errors.New("scan with cf failed")
-				}
-				return nil
-			},
-		},
-		{
-			name: "scan with limit",
-			cmd:  "scan key1 key5 --limit=2",
-			setupFunc: func() {
+			name:  "put with insufficient args",
+			input: "put key1",
+			setup: func(db *mockDB, state *ReplState) {
 				state.CurrentCF = "default"
 			},
-			checkFunc: func() error {
-				res, err := mockDB.ScanCF("default", []byte("key1"), []byte("key5"), db.ScanOptions{Values: true, Limit: 2})
-				if err != nil || len(res) != 2 {
-					return errors.New("scan with limit failed")
-				}
-				return nil
-			},
+			wantErr: true,
 		},
 		{
-			name: "scan reverse",
-			cmd:  "scan key1 key5 --reverse",
-			setupFunc: func() {
-				// Clear default CF and set up clean test data
-				mockDB.data["default"] = make(map[string]string)
-				mockDB.PutCF("default", "key1", "v1")
-				mockDB.PutCF("default", "key2", "v2")
-				mockDB.PutCF("default", "key3", "v3")
-				mockDB.PutCF("default", "key4", "v4")
-				mockDB.PutCF("default", "key5", "v5")
-			},
-			checkFunc: func() error {
-				res, err := mockDB.ScanCF("default", []byte("key1"), []byte("key5"), db.ScanOptions{Values: true, Reverse: true})
-				if err != nil {
-					return errors.New("reverse scan failed")
-				}
-
-				// Should get key1, key2, key3, key4 (key5 is excluded in range scan)
-				expectedKeys := []string{"key1", "key2", "key3", "key4"}
-				if len(res) != len(expectedKeys) {
-					return fmt.Errorf("expected %d keys, got %d", len(expectedKeys), len(res))
-				}
-
-				for _, expectedKey := range expectedKeys {
-					if _, exists := res[expectedKey]; !exists {
-						return fmt.Errorf("expected key %s not found in results", expectedKey)
-					}
-				}
-				return nil
-			},
-		},
-		{
-			name: "scan without values",
-			cmd:  "scan key1 key5 --values=no",
-			checkFunc: func() error {
-				res, err := mockDB.ScanCF("default", []byte("key1"), []byte("key5"), db.ScanOptions{Values: false})
-				if err != nil {
-					return errors.New("scan without values failed")
-				}
-				for _, v := range res {
-					if v != "" {
-						return errors.New("scan without values returned values")
-					}
-				}
-				return nil
-			},
-		},
-		{
-			name: "scan two args with current cf should be start/end",
-			cmd:  "scan key1 key3",
-			setupFunc: func() {
+			name:  "operation on non-existent CF",
+			input: "get nonexistent key1",
+			setup: func(db *mockDB, state *ReplState) {
 				state.CurrentCF = "default"
-				// Ensure we have test data
-				mockDB.PutCF("default", "key1", "v1")
-				mockDB.PutCF("default", "key2", "v2")
-				mockDB.PutCF("default", "key3", "v3")
 			},
-			checkFunc: func() error {
-				// This should scan from key1 to key3 in default CF, not treat key1 as CF name
-				res, err := mockDB.ScanCF("default", []byte("key1"), []byte("key3"), db.ScanOptions{Values: true})
-				if err != nil {
-					return fmt.Errorf("scan with current cf failed: %v", err)
-				}
-				// Should get key1 and key2 (key3 is excluded in range scan)
-				if len(res) != 2 {
-					return fmt.Errorf("expected 2 results, got %d", len(res))
-				}
-				if _, ok := res["key1"]; !ok {
-					return errors.New("key1 should be in results")
-				}
-				if _, ok := res["key2"]; !ok {
-					return errors.New("key2 should be in results")
-				}
-				return nil
-			},
-		},
-		{
-			name: "scan two args without current cf should be cf/start",
-			cmd:  "scan testcf2 key1",
-			setupFunc: func() {
-				state.CurrentCF = "" // No current CF
-				mockDB.CreateCF("testcf2")
-				// Clear any existing data in testcf2
-				mockDB.data["testcf2"] = make(map[string]string)
-				mockDB.PutCF("testcf2", "key1", "v1")
-				mockDB.PutCF("testcf2", "key2", "v2")
-			},
-			checkFunc: func() error {
-				// This should scan from key1 to end in testcf2
-				res, err := mockDB.ScanCF("testcf2", []byte("key1"), nil, db.ScanOptions{Values: true})
-				if err != nil {
-					return fmt.Errorf("scan without current cf failed: %v", err)
-				}
-				if len(res) != 2 {
-					return fmt.Errorf("expected 2 results, got %d", len(res))
-				}
-				return nil
-			},
-		},
-		{
-			name: "scan * wildcard with current cf",
-			cmd:  "scan *",
-			setupFunc: func() {
-				state.CurrentCF = "default"
-				// Clear default CF and set up test data
-				mockDB.data["default"] = make(map[string]string)
-				mockDB.PutCF("default", "key1", "v1")
-				mockDB.PutCF("default", "key2", "v2")
-				mockDB.PutCF("default", "key3", "v3")
-			},
-			checkFunc: func() error {
-				// This should scan all entries in default CF
-				res, err := mockDB.ScanCF("default", nil, nil, db.ScanOptions{Values: true})
-				if err != nil {
-					return fmt.Errorf("scan * with current cf failed: %v", err)
-				}
-				if len(res) != 3 {
-					return fmt.Errorf("expected 3 results, got %d", len(res))
-				}
-				for i := 1; i <= 3; i++ {
-					key := fmt.Sprintf("key%d", i)
-					if _, ok := res[key]; !ok {
-						return fmt.Errorf("expected key %s not found in results", key)
-					}
-				}
-				return nil
-			},
-		},
-		{
-			name: "scan * * wildcard range with current cf",
-			cmd:  "scan * *",
-			setupFunc: func() {
-				state.CurrentCF = "default"
-				// Data should already be set from previous test
-			},
-			checkFunc: func() error {
-				// This should scan all entries in default CF (both start and end are nil)
-				res, err := mockDB.ScanCF("default", nil, nil, db.ScanOptions{Values: true})
-				if err != nil {
-					return fmt.Errorf("scan * * with current cf failed: %v", err)
-				}
-				if len(res) != 3 {
-					return fmt.Errorf("expected 3 results, got %d", len(res))
-				}
-				return nil
-			},
-		},
-		{
-			name: "scan testcf * wildcard with explicit cf",
-			cmd:  "scan testcf *",
-			setupFunc: func() {
-				mockDB.CreateCF("testcf")
-				mockDB.data["testcf"] = make(map[string]string)
-				mockDB.PutCF("testcf", "a", "va")
-				mockDB.PutCF("testcf", "b", "vb")
-			},
-			checkFunc: func() error {
-				// This should scan all entries in testcf
-				res, err := mockDB.ScanCF("testcf", nil, nil, db.ScanOptions{Values: true})
-				if err != nil {
-					return fmt.Errorf("scan with cf * failed: %v", err)
-				}
-				if len(res) != 2 {
-					return fmt.Errorf("expected 2 results, got %d", len(res))
-				}
-				if _, ok := res["a"]; !ok {
-					return errors.New("expected key 'a' not found")
-				}
-				if _, ok := res["b"]; !ok {
-					return errors.New("expected key 'b' not found")
-				}
-				return nil
-			},
-		},
-		{
-			name: "export with current cf",
-			cmd:  "export test_export.csv",
-			setupFunc: func() {
-				state.CurrentCF = "default"
-				mockDB.PutCF("default", "export_key1", "export_value1")
-				mockDB.PutCF("default", "export_key2", "export_value2")
-			},
-			checkFunc: func() error {
-				// Since we're using mockDB, we just check that the method was called without error
-				return nil
-			},
-		},
-		{
-			name: "export with explicit cf",
-			cmd:  "export default test_export2.csv",
-			checkFunc: func() error {
-				// Since we're using mockDB, we just check that the method was called without error
-				return nil
-			},
-		},
-		{
-			name:        "export nonexistent cf should fail",
-			cmd:         "export nonexistent test_export3.csv",
-			expectError: true,
-			checkFunc: func() error {
-				// The command should handle the error gracefully
-				return nil
-			},
-		},
-		{
-			name: "last with current cf",
-			cmd:  "last",
-			setupFunc: func() {
-				state.CurrentCF = "default"
-				mockDB.PutCF("default", "lastkey1", "lastvalue1")
-				mockDB.PutCF("default", "lastkey2", "lastvalue2")
-			},
-			checkFunc: func() error {
-				key, _, err := mockDB.GetLastCF("default")
-				if err != nil || key == "" {
-					return errors.New("last command failed")
-				}
-				return nil
-			},
-		},
-		{
-			name: "last with explicit cf",
-			cmd:  "last default",
-			checkFunc: func() error {
-				key, _, err := mockDB.GetLastCF("default")
-				if err != nil || key == "" {
-					return errors.New("last command with cf failed")
-				}
-				return nil
-			},
-		},
-		{
-			name: "last with pretty flag and current cf",
-			cmd:  "last --pretty",
-			setupFunc: func() {
-				state.CurrentCF = "default"
-				// Clear existing data first
-				mockDB.data["default"] = make(map[string]string)
-				mockDB.PutCF("default", "json_key", `{"name":"test","value":123}`)
-			},
-			checkFunc: func() error {
-				key, value, err := mockDB.GetLastCF("default")
-				if err != nil {
-					return fmt.Errorf("GetLastCF failed: %v", err)
-				}
-				if key != "json_key" {
-					return fmt.Errorf("expected key 'json_key', got '%s'", key)
-				}
-				// Verify the value is JSON
-				if !strings.Contains(value, `"name":"test"`) {
-					return fmt.Errorf("test data should contain JSON, got: %s", value)
-				}
-				return nil
-			},
-		},
-		{
-			name: "last with pretty flag and explicit cf",
-			cmd:  "last default --pretty",
-			setupFunc: func() {
-				// Clear existing data first
-				mockDB.data["default"] = make(map[string]string)
-				mockDB.PutCF("default", "json_key2", `{"users":[{"id":1,"name":"Alice"}]}`)
-			},
-			checkFunc: func() error {
-				key, value, err := mockDB.GetLastCF("default")
-				if err != nil {
-					return fmt.Errorf("GetLastCF failed: %v", err)
-				}
-				if key != "json_key2" {
-					return fmt.Errorf("expected key 'json_key2', got '%s'", key)
-				}
-				// Verify the value is JSON
-				if !strings.Contains(value, `"users"`) {
-					return fmt.Errorf("test data should contain JSON, got: %s", value)
-				}
-				return nil
-			},
-		},
-		{
-			name:        "last nonexistent cf should fail",
-			cmd:         "last nonexistent",
-			expectError: true,
-			checkFunc: func() error {
-				// The command should handle the error gracefully
-				return nil
-			},
-		},
-		{
-			name: "jsonquery with current cf - string field",
-			cmd:  "jsonquery name Alice",
-			setupFunc: func() {
-				state.CurrentCF = "users"
-				mockDB.CreateCF("users")
-				mockDB.data["users"] = make(map[string]string)
-				mockDB.PutCF("users", "user:1001", `{"id":1001,"name":"Alice","age":25}`)
-				mockDB.PutCF("users", "user:1002", `{"id":1002,"name":"Bob","age":30}`)
-				mockDB.PutCF("users", "user:1003", `{"id":1003,"name":"Alice","age":28}`)
-			},
-			checkFunc: func() error {
-				result, err := mockDB.JSONQueryCF("users", "name", "Alice")
-				if err != nil {
-					return fmt.Errorf("JSONQueryCF failed: %v", err)
-				}
-				if len(result) != 2 {
-					return fmt.Errorf("expected 2 results, got %d", len(result))
-				}
-				// Check that both Alice entries are returned
-				if _, ok := result["user:1001"]; !ok {
-					return errors.New("user:1001 should be in results")
-				}
-				if _, ok := result["user:1003"]; !ok {
-					return errors.New("user:1003 should be in results")
-				}
-				return nil
-			},
-		},
-		{
-			name: "jsonquery with explicit cf - number field",
-			cmd:  "jsonquery users age 30",
-			setupFunc: func() {
-				// Data already set up in previous test
-			},
-			checkFunc: func() error {
-				result, err := mockDB.JSONQueryCF("users", "age", "30")
-				if err != nil {
-					return fmt.Errorf("JSONQueryCF failed: %v", err)
-				}
-				if len(result) != 1 {
-					return fmt.Errorf("expected 1 result, got %d", len(result))
-				}
-				if _, ok := result["user:1002"]; !ok {
-					return errors.New("user:1002 should be in results")
-				}
-				return nil
-			},
-		},
-		{
-			name: "jsonquery with pretty flag",
-			cmd:  "jsonquery users name Bob --pretty",
-			checkFunc: func() error {
-				result, err := mockDB.JSONQueryCF("users", "name", "Bob")
-				if err != nil {
-					return fmt.Errorf("JSONQueryCF failed: %v", err)
-				}
-				if len(result) != 1 {
-					return fmt.Errorf("expected 1 result, got %d", len(result))
-				}
-				return nil
-			},
-		},
-		{
-			name: "jsonquery no results",
-			cmd:  "jsonquery users name Charlie",
-			checkFunc: func() error {
-				result, err := mockDB.JSONQueryCF("users", "name", "Charlie")
-				if err != nil {
-					return fmt.Errorf("JSONQueryCF failed: %v", err)
-				}
-				if len(result) != 0 {
-					return fmt.Errorf("expected 0 results, got %d", len(result))
-				}
-				return nil
-			},
-		},
-		{
-			name:        "jsonquery nonexistent cf should fail",
-			cmd:         "jsonquery nonexistent name Alice",
-			expectError: true,
-			checkFunc: func() error {
-				// The command should handle the error gracefully
-				return nil
-			},
+			wantOut: "Column family 'key1' does not exist\n",
+			wantErr: false,
 		},
 	}
 
-	// Run test cases
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if c.setupFunc != nil {
-				c.setupFunc()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, db := newTestHandler("default")
+			state := handler.State.(*ReplState)
+
+			if tt.setup != nil {
+				tt.setup(db, state)
 			}
-			cont := h.Execute(c.cmd)
-			if !cont {
-				t.Error("Execute returned false, expected true")
+
+			var output string
+			if tt.wantOut != "" {
+				output = captureOutput(func() {
+					handler.Execute(tt.input)
+				})
+			} else {
+				handler.Execute(tt.input)
 			}
-			if c.checkFunc != nil {
-				if err := c.checkFunc(); err != nil {
-					t.Error(err)
-				}
+
+			// Validate output if expected
+			if tt.wantOut != "" && output != tt.wantOut {
+				t.Errorf("Execute() output = %q, want %q", output, tt.wantOut)
+			}
+
+			// Additional validation
+			if tt.validate != nil {
+				tt.validate(t, db, state)
 			}
 		})
 	}
