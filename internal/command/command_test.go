@@ -28,18 +28,18 @@ func newMockDB() *mockDB {
 
 func (m *mockDB) GetCF(cf, key string) (string, error) {
 	if !m.cfExists[cf] {
-		return "", errors.New("column family not found")
+		return "", db.ErrColumnFamilyNotFound
 	}
 	v, ok := m.data[cf][key]
 	if !ok {
-		return "", errors.New("not found")
+		return "", db.ErrKeyNotFound
 	}
 	return v, nil
 }
 
 func (m *mockDB) PutCF(cf, key, value string) error {
 	if !m.cfExists[cf] {
-		return errors.New("column family not found")
+		return db.ErrColumnFamilyNotFound
 	}
 	if m.data[cf] == nil {
 		m.data[cf] = make(map[string]string)
@@ -50,7 +50,7 @@ func (m *mockDB) PutCF(cf, key, value string) error {
 
 func (m *mockDB) PrefixScanCF(cf, prefix string, limit int) (map[string]string, error) {
 	if !m.cfExists[cf] {
-		return nil, errors.New("column family not found")
+		return nil, db.ErrColumnFamilyNotFound
 	}
 	res := make(map[string]string)
 	for k, v := range m.data[cf] {
@@ -66,7 +66,7 @@ func (m *mockDB) PrefixScanCF(cf, prefix string, limit int) (map[string]string, 
 
 func (m *mockDB) ScanCF(cf string, start, end []byte, opts db.ScanOptions) (map[string]string, error) {
 	if !m.cfExists[cf] {
-		return nil, errors.New("column family not found")
+		return nil, db.ErrColumnFamilyNotFound
 	}
 
 	// Get all keys and sort them
@@ -138,7 +138,7 @@ func (m *mockDB) ListCFs() ([]string, error) {
 
 func (m *mockDB) CreateCF(cf string) error {
 	if m.cfExists[cf] {
-		return errors.New("column family already exists")
+		return db.ErrColumnFamilyExists
 	}
 	m.cfExists[cf] = true
 	m.data[cf] = make(map[string]string)
@@ -147,7 +147,7 @@ func (m *mockDB) CreateCF(cf string) error {
 
 func (m *mockDB) DropCF(cf string) error {
 	if !m.cfExists[cf] {
-		return errors.New("column family not found")
+		return db.ErrColumnFamilyNotFound
 	}
 	if cf == "default" {
 		return errors.New("cannot drop default column family")
@@ -159,12 +159,12 @@ func (m *mockDB) DropCF(cf string) error {
 
 func (m *mockDB) GetLastCF(cf string) (string, string, error) {
 	if !m.cfExists[cf] {
-		return "", "", errors.New("column family not found")
+		return "", "", db.ErrColumnFamilyNotFound
 	}
 
 	cfData, ok := m.data[cf]
 	if !ok || len(cfData) == 0 {
-		return "", "", errors.New("column family is empty")
+		return "", "", db.ErrColumnFamilyEmpty
 	}
 
 	// Find the lexicographically last key
@@ -181,7 +181,7 @@ func (m *mockDB) GetLastCF(cf string) (string, string, error) {
 
 func (m *mockDB) ExportToCSV(cf, filePath string) error {
 	if !m.cfExists[cf] {
-		return errors.New("column family not found")
+		return db.ErrColumnFamilyNotFound
 	}
 
 	// For testing, we'll just simulate the export without actually creating a file
@@ -197,7 +197,7 @@ func (m *mockDB) IsReadOnly() bool {
 
 func (m *mockDB) JSONQueryCF(cf, field, value string) (map[string]string, error) {
 	if !m.cfExists[cf] {
-		return nil, errors.New("column family not found")
+		return nil, db.ErrColumnFamilyNotFound
 	}
 
 	result := make(map[string]string)
@@ -1084,11 +1084,75 @@ func TestPrettyFlagInRealScenarios(t *testing.T) {
 	}
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
+func TestErrorHandling(t *testing.T) {
+	mockDB := newMockDB()
+	state := &ReplState{CurrentCF: "default"}
+
+	// Test key not found error
+	t.Run("key not found", func(t *testing.T) {
+		// Try to get a non-existent key
+		_, err := mockDB.GetCF("default", "nonexistent")
+		if !errors.Is(err, db.ErrKeyNotFound) {
+			t.Errorf("Expected ErrKeyNotFound, got %v", err)
+		}
+	})
+
+	// Test column family not found error
+	t.Run("column family not found", func(t *testing.T) {
+		// Try to get from non-existent CF
+		_, err := mockDB.GetCF("nonexistent", "key")
+		if !errors.Is(err, db.ErrColumnFamilyNotFound) {
+			t.Errorf("Expected ErrColumnFamilyNotFound, got %v", err)
+		}
+	})
+
+	// Test column family already exists error
+	t.Run("column family already exists", func(t *testing.T) {
+		// Try to create default CF which already exists
+		err := mockDB.CreateCF("default")
+		if !errors.Is(err, db.ErrColumnFamilyExists) {
+			t.Errorf("Expected ErrColumnFamilyExists, got %v", err)
+		}
+	})
+
+	// Test column family empty error
+	t.Run("column family empty", func(t *testing.T) {
+		// Create a new empty CF
+		mockDB.CreateCF("empty")
+
+		// Try to get last from empty CF
+		_, _, err := mockDB.GetLastCF("empty")
+		if !errors.Is(err, db.ErrColumnFamilyEmpty) {
+			t.Errorf("Expected ErrColumnFamilyEmpty, got %v", err)
+		}
+	})
+
+	// Test that handleError provides user-friendly messages
+	t.Run("handleError provides friendly messages", func(t *testing.T) {
+		tests := []struct {
+			name   string
+			err    error
+			op     string
+			params []string
+		}{
+			{"key not found", db.ErrKeyNotFound, "Query", []string{"mykey", "mycf"}},
+			{"cf not found", db.ErrColumnFamilyNotFound, "Query", []string{"mycf"}},
+			{"cf exists", db.ErrColumnFamilyExists, "Create", []string{"mycf"}},
+			{"read only", db.ErrReadOnlyMode, "Write", []string{}},
+			{"cf empty", db.ErrColumnFamilyEmpty, "GetLast", []string{"mycf"}},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				// This just ensures the function doesn't panic
+				// In a real test, we might capture stdout to verify the exact message
+				handleError(tt.err, tt.op, tt.params...)
+			})
+		}
+	})
+
+	// Prevent unused variable warning for state
+	_ = state
 }
 
 func contains(slice []string, item string) bool {
@@ -1098,4 +1162,11 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

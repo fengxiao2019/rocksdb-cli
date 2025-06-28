@@ -2,6 +2,7 @@ package command
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"rocksdb-cli/internal/db"
 	"strconv"
@@ -28,6 +29,42 @@ func prettyPrintJSON(val string) string {
 		return val // If can't pretty print, return as is
 	}
 	return string(prettyJSON)
+}
+
+// handleError provides user-friendly error messages for specific error types
+func handleError(err error, operation string, params ...string) {
+	if errors.Is(err, db.ErrKeyNotFound) {
+		if len(params) >= 2 {
+			fmt.Printf("Key '%s' not found in column family '%s'\n", params[0], params[1])
+		} else {
+			fmt.Println("Key not found")
+		}
+	} else if errors.Is(err, db.ErrColumnFamilyNotFound) {
+		if len(params) >= 1 {
+			fmt.Printf("Column family '%s' does not exist\n", params[0])
+		} else {
+			fmt.Println("Column family not found")
+		}
+	} else if errors.Is(err, db.ErrColumnFamilyExists) {
+		if len(params) >= 1 {
+			fmt.Printf("Column family '%s' already exists\n", params[0])
+		} else {
+			fmt.Println("Column family already exists")
+		}
+	} else if errors.Is(err, db.ErrReadOnlyMode) {
+		fmt.Println("Operation not allowed in read-only mode")
+	} else if errors.Is(err, db.ErrColumnFamilyEmpty) {
+		if len(params) >= 1 {
+			fmt.Printf("Column family '%s' is empty\n", params[0])
+		} else {
+			fmt.Println("Column family is empty")
+		}
+	} else if errors.Is(err, db.ErrDatabaseClosed) {
+		fmt.Println("Database is closed")
+	} else {
+		// Generic error message for unknown errors
+		fmt.Printf("%s failed: %v\n", operation, err)
+	}
 }
 
 // parseTimestamp attempts to parse a key as a timestamp and return formatted UTC time
@@ -243,7 +280,7 @@ func (h *Handler) Execute(input string) bool {
 
 		result, err := h.DB.ScanCF(cf, start, end, opts)
 		if err != nil {
-			fmt.Printf("Scan failed: %v\n", err)
+			handleError(err, "Scan", cf)
 		} else {
 			for k, v := range result {
 				if showTimestamp {
@@ -308,7 +345,7 @@ func (h *Handler) Execute(input string) bool {
 		}
 		val, err := h.DB.GetCF(cf, key)
 		if err != nil {
-			fmt.Printf("Query failed: %v\n", err)
+			handleError(err, "Query", key, cf)
 		} else {
 			if pretty {
 				fmt.Printf("%s\n", prettyPrintJSON(val))
@@ -337,7 +374,7 @@ func (h *Handler) Execute(input string) bool {
 		}
 		err := h.DB.PutCF(cf, key, value)
 		if err != nil {
-			fmt.Printf("Write failed: %v\n", err)
+			handleError(err, "Write", cf)
 		} else {
 			fmt.Println("OK")
 		}
@@ -357,7 +394,7 @@ func (h *Handler) Execute(input string) bool {
 		}
 		result, err := h.DB.PrefixScanCF(cf, prefix, 20)
 		if err != nil {
-			fmt.Printf("Query failed: %v\n", err)
+			handleError(err, "Prefix scan", cf)
 		} else {
 			for k, v := range result {
 				fmt.Printf("%s: %s\n", k, v)
@@ -366,7 +403,7 @@ func (h *Handler) Execute(input string) bool {
 	case "listcf":
 		cfs, err := h.DB.ListCFs()
 		if err != nil {
-			fmt.Printf("List CF failed: %v\n", err)
+			handleError(err, "List column families")
 		} else {
 			fmt.Println("Column Families:")
 			for _, cf := range cfs {
@@ -380,7 +417,7 @@ func (h *Handler) Execute(input string) bool {
 		}
 		err := h.DB.CreateCF(parts[1])
 		if err != nil {
-			fmt.Printf("Create CF failed: %v\n", err)
+			handleError(err, "Create column family", parts[1])
 		} else {
 			fmt.Println("OK")
 		}
@@ -391,7 +428,7 @@ func (h *Handler) Execute(input string) bool {
 		}
 		err := h.DB.DropCF(parts[1])
 		if err != nil {
-			fmt.Printf("Drop CF failed: %v\n", err)
+			handleError(err, "Drop column family", parts[1])
 		} else {
 			fmt.Println("OK")
 		}
@@ -418,7 +455,7 @@ func (h *Handler) Execute(input string) bool {
 
 		err := h.DB.ExportToCSV(cf, filePath)
 		if err != nil {
-			fmt.Printf("Export failed: %v\n", err)
+			handleError(err, "Export", cf)
 		} else {
 			fmt.Printf("Successfully exported column family '%s' to '%s'\n", cf, filePath)
 		}
@@ -464,7 +501,7 @@ func (h *Handler) Execute(input string) bool {
 
 		key, value, err := h.DB.GetLastCF(cf)
 		if err != nil {
-			fmt.Printf("Get last failed: %v\n", err)
+			handleError(err, "Get last", cf)
 		} else {
 			formattedValue := formatValue(value, pretty)
 			fmt.Printf("Last entry in '%s': %s = %s\n", cf, key, formattedValue)
@@ -507,7 +544,7 @@ func (h *Handler) Execute(input string) bool {
 
 		result, err := h.DB.JSONQueryCF(cf, field, value)
 		if err != nil {
-			fmt.Printf("JSON query failed: %v\n", err)
+			handleError(err, "JSON query", cf)
 		} else {
 			if len(result) == 0 {
 				fmt.Printf("No entries found in '%s' where field '%s' = '%s'\n", cf, field, value)

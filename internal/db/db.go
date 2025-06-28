@@ -11,6 +11,16 @@ import (
 	"github.com/linxGnu/grocksdb"
 )
 
+// Specific error types for better error handling
+var (
+	ErrKeyNotFound          = errors.New("key not found")
+	ErrColumnFamilyNotFound = errors.New("column family not found")
+	ErrColumnFamilyExists   = errors.New("column family already exists")
+	ErrReadOnlyMode         = errors.New("operation not allowed in read-only mode")
+	ErrColumnFamilyEmpty    = errors.New("column family is empty")
+	ErrDatabaseClosed       = errors.New("database is closed")
+)
+
 type ScanOptions struct {
 	Limit   int
 	Reverse bool
@@ -101,7 +111,7 @@ func (d *DB) Close() {
 func (d *DB) GetCF(cf, key string) (string, error) {
 	h, ok := d.cfHandles[cf]
 	if !ok {
-		return "", errors.New("column family not found")
+		return "", ErrColumnFamilyNotFound
 	}
 	val, err := d.db.GetCF(d.ro, h, []byte(key))
 	if err != nil {
@@ -109,18 +119,18 @@ func (d *DB) GetCF(cf, key string) (string, error) {
 	}
 	defer val.Free()
 	if !val.Exists() {
-		return "", errors.New("not found")
+		return "", ErrKeyNotFound
 	}
 	return string(val.Data()), nil
 }
 
 func (d *DB) PutCF(cf, key, value string) error {
 	if d.readOnly {
-		return errors.New("read-only mode")
+		return ErrReadOnlyMode
 	}
 	h, ok := d.cfHandles[cf]
 	if !ok {
-		return errors.New("column family not found")
+		return ErrColumnFamilyNotFound
 	}
 	return d.db.PutCF(d.wo, h, []byte(key), []byte(value))
 }
@@ -128,7 +138,7 @@ func (d *DB) PutCF(cf, key, value string) error {
 func (d *DB) PrefixScanCF(cf, prefix string, limit int) (map[string]string, error) {
 	h, ok := d.cfHandles[cf]
 	if !ok {
-		return nil, errors.New("column family not found")
+		return nil, ErrColumnFamilyNotFound
 	}
 	it := d.db.NewIteratorCF(d.ro, h)
 	defer it.Close()
@@ -154,7 +164,7 @@ func (d *DB) PrefixScanCF(cf, prefix string, limit int) (map[string]string, erro
 func (d *DB) ScanCF(cf string, start, end []byte, opts ScanOptions) (map[string]string, error) {
 	h, ok := d.cfHandles[cf]
 	if !ok {
-		return nil, errors.New("column family not found")
+		return nil, ErrColumnFamilyNotFound
 	}
 
 	it := d.db.NewIteratorCF(d.ro, h)
@@ -245,7 +255,11 @@ func (d *DB) ListCFs() ([]string, error) {
 
 func (d *DB) CreateCF(cf string) error {
 	if d.readOnly {
-		return errors.New("cannot create column family in read-only mode")
+		return ErrReadOnlyMode
+	}
+	// Check if column family already exists
+	if _, exists := d.cfHandles[cf]; exists {
+		return ErrColumnFamilyExists
 	}
 	h, err := d.db.CreateColumnFamily(grocksdb.NewDefaultOptions(), cf)
 	if err != nil {
@@ -257,11 +271,11 @@ func (d *DB) CreateCF(cf string) error {
 
 func (d *DB) DropCF(cf string) error {
 	if d.readOnly {
-		return errors.New("cannot drop column family in read-only mode")
+		return ErrReadOnlyMode
 	}
 	h, ok := d.cfHandles[cf]
 	if !ok {
-		return errors.New("column family not found")
+		return ErrColumnFamilyNotFound
 	}
 	err := d.db.DropColumnFamily(h)
 	if err != nil {
@@ -275,7 +289,7 @@ func (d *DB) DropCF(cf string) error {
 func (d *DB) GetLastCF(cf string) (string, string, error) {
 	h, ok := d.cfHandles[cf]
 	if !ok {
-		return "", "", errors.New("column family not found")
+		return "", "", ErrColumnFamilyNotFound
 	}
 
 	it := d.db.NewIteratorCF(d.ro, h)
@@ -284,7 +298,7 @@ func (d *DB) GetLastCF(cf string) (string, string, error) {
 	// Seek to the last key-value pair
 	it.SeekToLast()
 	if !it.Valid() {
-		return "", "", errors.New("column family is empty")
+		return "", "", ErrColumnFamilyEmpty
 	}
 
 	k := it.Key()
@@ -298,7 +312,7 @@ func (d *DB) GetLastCF(cf string) (string, string, error) {
 func (d *DB) ExportToCSV(cf, filePath string) error {
 	h, ok := d.cfHandles[cf]
 	if !ok {
-		return errors.New("column family not found")
+		return ErrColumnFamilyNotFound
 	}
 
 	file, err := os.Create(filePath)
@@ -352,7 +366,7 @@ func hasPrefix(s, prefix []byte) bool {
 func (d *DB) JSONQueryCF(cf, field, value string) (map[string]string, error) {
 	h, ok := d.cfHandles[cf]
 	if !ok {
-		return nil, errors.New("column family not found")
+		return nil, ErrColumnFamilyNotFound
 	}
 
 	it := d.db.NewIteratorCF(d.ro, h)

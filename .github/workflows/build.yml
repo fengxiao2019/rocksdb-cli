@@ -1,0 +1,58 @@
+name: Build Linux
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ created ]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+    
+    - name: Build with Docker
+      run: |
+        docker build -t rocksdb-cli-builder .
+        
+    - name: Extract binaries from Docker
+      run: |
+        mkdir -p build
+        # Create temporary container to extract binary
+        docker create --name temp-container rocksdb-cli-builder
+        docker cp temp-container:/usr/local/bin/rocksdb-cli ./build/rocksdb-cli-linux-amd64
+        docker rm temp-container
+        
+    - name: Build for Linux arm64 in Docker
+      run: |
+        # Build ARM64 version using Docker buildx
+        docker buildx build --platform linux/arm64 -t rocksdb-cli-builder-arm64 . --load
+        docker create --name temp-container-arm64 rocksdb-cli-builder-arm64
+        docker cp temp-container-arm64:/usr/local/bin/rocksdb-cli ./build/rocksdb-cli-linux-arm64
+        docker rm temp-container-arm64
+    
+    - name: Upload Linux artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: linux-binaries
+        path: build/rocksdb-cli-linux-*
+
+  release:
+    if: github.event_name == 'release'
+    needs: [build-linux]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v3
+    
+    - name: Release binaries
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          linux-binaries/* 

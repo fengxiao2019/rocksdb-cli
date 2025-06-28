@@ -47,4 +47,7 @@ rocksdb-cli
 
 # Environment variables
 .env
-*.env 
+*.env
+
+# Task planning files
+tasks/ 
