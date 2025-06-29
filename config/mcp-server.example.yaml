@@ -1,0 +1,74 @@
+# RocksDB MCP Server Configuration Example
+# Copy this file to config/mcp-server.yaml and modify as needed
+
+# Server information
+name: "RocksDB MCP Server"
+version: "1.0.0"
+description: "MCP server for RocksDB database operations with column family support"
+
+# Database configuration
+database_path: "./data/rocksdb"  # Path to your RocksDB database
+read_only: false                 # Set to true for production/AI assistant usage
+
+# Transport configuration
+transport:
+  type: "stdio"      # Transport type: stdio, tcp, websocket, unix
+  host: "localhost"  # Host for TCP/WebSocket (ignored for stdio/unix)
+  port: 8080         # Port for TCP/WebSocket (ignored for stdio/unix)
+  path: "/mcp"       # Path for WebSocket (default: /mcp)
+  socket_path: "/tmp/rocksdb-mcp.sock"  # Path for Unix socket
+  timeout: 30s       # Connection timeout
+
+# Server settings
+max_concurrent_sessions: 10  # Maximum number of concurrent MCP sessions
+session_timeout: 5m          # Session timeout duration
+
+# Tool configuration
+enable_all_tools: true       # Enable all available tools
+enabled_tools: []            # Specific tools to enable (when enable_all_tools: false)
+  # - "rocksdb_get"
+  # - "rocksdb_scan"
+  # - "rocksdb_prefix_scan"
+  # - "rocksdb_list_column_families"
+
+disabled_tools: []           # Tools to disable (even when enable_all_tools: true)
+  # - "rocksdb_put"
+  # - "rocksdb_create_column_family"
+  # - "rocksdb_drop_column_family"
+
+# Resource configuration
+enable_resources: true      # Enable MCP resources (for advanced integrations)
+
+# Logging configuration
+log_level: "info"           # Log level: debug, info, warn, error
+
+# Example configurations for different use cases:
+
+# --- Read-only configuration for AI assistants ---
+# name: "RocksDB MCP Server (Read-Only)"
+# database_path: "/path/to/production/rocksdb"
+# read_only: true
+# enable_all_tools: false
+# enabled_tools:
+#   - "rocksdb_get"
+#   - "rocksdb_scan"
+#   - "rocksdb_prefix_scan"
+#   - "rocksdb_list_column_families"
+#   - "rocksdb_export_to_csv"
+#   - "rocksdb_json_query"
+#   - "rocksdb_get_last"
+
+# --- Development configuration with TCP transport ---
+# transport:
+#   type: "tcp"
+#   host: "0.0.0.0"
+#   port: 8080
+# max_concurrent_sessions: 5
+# log_level: "debug"
+
+# --- High-performance Unix socket configuration ---
+# transport:
+#   type: "unix"
+#   socket_path: "/tmp/rocksdb-mcp-high-perf.sock"
+# max_concurrent_sessions: 20
+# session_timeout: 10m 

@@ -1,0 +1,31 @@
+# RocksDB MCP Server Configuration
+# 用于查看RocksDB列族信息
+
+# Server information
+name: "RocksDB MCP Server"
+version: "1.0.0"
+description: "MCP server for RocksDB database operations with column family support"
+
+# Database configuration
+database_path: "./testdb"  # Path to test RocksDB database
+read_only: true           # Set to true for safe reading
+
+# Transport configuration
+transport:
+  type: "stdio"      # Transport type: stdio for command line usage
+  timeout: 30s       # Connection timeout
+
+# Server settings
+max_concurrent_sessions: 5   # Maximum number of concurrent MCP sessions
+session_timeout: 5m          # Session timeout duration
+
+# Tool configuration
+enable_all_tools: true       # Enable all available tools
+enabled_tools: []            # All tools enabled
+disabled_tools: []           # No tools disabled
+
+# Resource configuration
+enable_resources: true      # Enable MCP resources
+
+# Logging configuration
+log_level: "info"           # Log level: debug, info, warn, error 
