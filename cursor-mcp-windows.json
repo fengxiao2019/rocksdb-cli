@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "rocksdb": {
+      "command": "powershell.exe",
+      "args": [
+        "-ExecutionPolicy", "Bypass",
+        "-File", "C:\\path\\to\\your\\rocksdb-cli\\start-mcp-server.ps1"
+      ],
+      "env": {
+        "MCP_DB_PATH": "C:\\path\\to\\your\\database",
+        "MCP_CONFIG": "C:\\path\\to\\your\\config\\mcp-server.yaml",
+      }
+    }
+  }
+} 
