@@ -42,6 +42,7 @@ rocksdb-cli
 
 # Output of the go coverage tool
 *.out
+coverage.html
 
 # Dependency directories (remove the comment below if you want to check in vendor/)
 # vendor/

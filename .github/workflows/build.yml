@@ -12,39 +12,24 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Set up Go
-      uses: actions/setup-go@v4
-      with:
-        go-version: '1.22'
+    - name: Log in to GitHub Container Registry
+      run: echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
     
-    - name: Install RocksDB dependencies
+    - name: Build and test in Docker
       run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          librocksdb-dev \
-          libsnappy-dev \
-          liblz4-dev \
-          libzstd-dev \
-          libbz2-dev \
-          zlib1g-dev
+        docker build -t rocksdb-cli-test -f Dockerfile.test .
+        docker run --rm rocksdb-cli-test
     
-    - name: Set up CGO environment
+    - name: Extract coverage report
       run: |
-        echo "CGO_CFLAGS=-I/usr/include" >> $GITHUB_ENV
-        echo "CGO_LDFLAGS=-L/usr/lib/x86_64-linux-gnu -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd" >> $GITHUB_ENV
-        echo "CGO_ENABLED=1" >> $GITHUB_ENV
-    
-    - name: Download dependencies
-      run: go mod download
-    
-    - name: Run unit tests
-      run: go test ./... -v -race -coverprofile=coverage.out
-    
-    - name: Generate coverage report
-      run: go tool cover -html=coverage.out -o coverage.html
+        # Create a temporary container to extract coverage report
+        docker create --name temp-test rocksdb-cli-test
+        docker cp temp-test:/app/coverage.html ./coverage.html 2>/dev/null || echo "No coverage report found"
+        docker rm temp-test
     
     - name: Upload coverage artifacts
       uses: actions/upload-artifact@v4
+      if: always()
       with:
         name: coverage-report
         path: coverage.html 
