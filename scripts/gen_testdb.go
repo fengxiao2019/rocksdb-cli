@@ -58,13 +58,15 @@ func main() {
 			"hello":    "world",
 		},
 		"users": {
-			"user:1001": `{"id":1001,"name":"Alice","email":"alice@example.com","age":25}`,
-			"user:1002": `{"id":1002,"name":"Bob","email":"bob@example.com","age":30}`,
-			"user:1003": `{"id":1003,"name":"Charlie","email":"charlie@example.com","age":35}`,
-			"user:1004": `{"id":1004,"name":"Diana","email":"diana@example.com","age":28}`,
-			"user:1005": `{"id":1005,"name":"Eve","email":"eve@example.com","age":32}`,
-			"admin:001": `{"id":"admin001","name":"Admin User","role":"administrator","permissions":["read","write","delete"]}`,
-			"guest:001": `{"id":"guest001","name":"Guest User","role":"guest","permissions":["read"]}`,
+			"user:1001":    `{"id":1001,"name":"Alice","email":"alice@example.com","age":25}`,
+			"user:1002":    `{"id":1002,"name":"Bob","email":"bob@example.com","age":30}`,
+			"user:1003":    `{"id":1003,"name":"Charlie","email":"charlie@example.com","age":35}`,
+			"user:1004":    `{"id":1004,"name":"Diana","email":"diana@example.com","age":28}`,
+			"user:1005":    `{"id":1005,"name":"Eve","email":"eve@example.com","age":32}`,
+			"admin:001":    `{"id":"admin001","name":"Admin User","role":"administrator","permissions":["read","write","delete"]}`,
+			"guest:001":    `{"id":"guest001","name":"Guest User","role":"guest","permissions":["read"]}`,
+			"user:nested1": `{"user_id":"123","profile":"{\"name\":\"Alice\",\"age\":30,\"city\":\"New York\"}","preferences":"{\"theme\":\"dark\",\"notifications\":true}"}`,
+			"user:nested2": `{"event_id":"evt_001","metadata":"{\"timestamp\":\"2024-01-15T10:30:00Z\",\"source\":\"api\",\"details\":{\"user_agent\":\"Mozilla/5.0\",\"ip\":\"192.168.1.1\"}}","payload":"{\"users\":[{\"id\":1,\"name\":\"Alice\"},{\"id\":2,\"name\":\"Bob\"}],\"action\":\"login\"}"}`,
 		},
 		"products": {
 			"prod:apple":   `{"name":"Apple","price":1.50,"category":"fruit","stock":100}`,
@@ -77,6 +79,8 @@ func main() {
 			"sku:GHI789":   "Google Pixel 7",
 			"category:001": "Electronics",
 			"category:002": "Clothing",
+			"order:12345":  `{"id":"order_123","description":"Customer order for electronics","order_data":"{\"items\":[{\"product\":\"laptop\",\"price\":999.99},{\"product\":\"mouse\",\"price\":29.99}],\"total\":1029.98}","note":"Priority shipping requested"}`,
+			"order:67890":  `{"order_id":"67890","customer_info":"{\"name\":\"John Doe\",\"address\":{\"street\":\"123 Main St\",\"city\":\"Springfield\",\"zip\":\"12345\"}}","items":"[{\"id\":\"item1\",\"name\":\"Widget A\"},{\"id\":\"item2\",\"name\":\"Widget B\"}]"}`,
 		},
 		"logs": {
 			"2024-01-01T10:00:00": `{"level":"INFO","message":"Application started","service":"api"}`,
@@ -134,4 +138,10 @@ func main() {
 	fmt.Println("  > prefix user:")
 	fmt.Println("  > scan user:1001 user:1005")
 	fmt.Println("  > get user:1001 --pretty")
+	fmt.Println("\nTest nested JSON expansion with --pretty:")
+	fmt.Println("  > get user:nested1 --pretty")
+	fmt.Println("  > get user:nested2 --pretty")
+	fmt.Println("  > usecf products")
+	fmt.Println("  > get order:12345 --pretty")
+	fmt.Println("  > get order:67890 --pretty")
 }

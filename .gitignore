@@ -34,6 +34,7 @@ LOCK
 
 # Binary files
 bin/
+release/
 rocksdb-cli
 
 # Test binary, built with `go test -c`
@@ -50,4 +51,4 @@ rocksdb-cli
 *.env
 
 # Task planning files
-tasks/ 
+tasks/

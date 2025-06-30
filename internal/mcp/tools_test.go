@@ -1,9 +1,11 @@
 package mcp
 
 import (
+	"strings"
 	"testing"
 
 	"rocksdb-cli/internal/db"
+	"rocksdb-cli/internal/jsonutil"
 
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -346,6 +348,128 @@ func TestScanWithOptions(t *testing.T) {
 	for key, value := range results {
 		if value != "" {
 			t.Errorf("Expected empty value for key %s when Values: false, got '%s'", key, value)
+		}
+	}
+}
+
+func TestFormatJSONValue_SimpleJSON(t *testing.T) {
+	tm := &ToolManager{}
+
+	input := `{"name":"Alice","age":25}`
+	expected := `{
+  "age": 25,
+  "name": "Alice"
+}`
+
+	result := tm.formatJSONValue(input)
+
+	if result != expected {
+		t.Errorf("Expected:\n%s\nGot:\n%s", expected, result)
+	}
+}
+
+func TestFormatJSONValue_NestedJSONString(t *testing.T) {
+	tm := &ToolManager{}
+
+	// Test case with embedded JSON string
+	input := `{"id":"user001","data":"{\"name\":\"Alice\",\"age\":25,\"details\":{\"city\":\"New York\",\"country\":\"USA\"}}"}`
+
+	result := tm.formatJSONValue(input)
+
+	// Check that the nested JSON was expanded
+	if !strings.Contains(result, `"name": "Alice"`) {
+		t.Error("Nested JSON was not expanded properly - missing name field")
+	}
+
+	if !strings.Contains(result, `"city": "New York"`) {
+		t.Error("Deeply nested JSON was not expanded properly - missing city field")
+	}
+
+	// Ensure it's properly formatted with indentation
+	if !strings.Contains(result, "  ") {
+		t.Error("Output should be pretty-formatted with indentation")
+	}
+}
+
+func TestFormatJSONValue_ArrayWithJSONStrings(t *testing.T) {
+	tm := &ToolManager{}
+
+	// Test case with array containing JSON strings
+	input := `{"users":["{\"name\":\"Alice\",\"age\":25}","{\"name\":\"Bob\",\"age\":30}"]}`
+
+	result := tm.formatJSONValue(input)
+
+	// Check that JSON strings in array were expanded
+	if !strings.Contains(result, `"name": "Alice"`) {
+		t.Error("JSON string in array was not expanded - missing Alice")
+	}
+
+	if !strings.Contains(result, `"name": "Bob"`) {
+		t.Error("JSON string in array was not expanded - missing Bob")
+	}
+}
+
+func TestFormatJSONValue_InvalidJSON(t *testing.T) {
+	tm := &ToolManager{}
+
+	// Test case with invalid JSON
+	input := `not valid json`
+
+	result := tm.formatJSONValue(input)
+
+	// Should return the original string if not valid JSON
+	if result != input {
+		t.Errorf("Expected original string for invalid JSON, got: %s", result)
+	}
+}
+
+func TestFormatJSONValue_MixedContent(t *testing.T) {
+	tm := &ToolManager{}
+
+	// Test case with mix of regular strings and JSON strings
+	input := `{"id":"user001","regular_text":"This is just text","json_data":"{\"embedded\":true,\"value\":42}"}`
+
+	result := tm.formatJSONValue(input)
+
+	// Check that only actual JSON strings were expanded
+	if !strings.Contains(result, `"embedded": true`) {
+		t.Error("JSON string was not expanded")
+	}
+
+	if !strings.Contains(result, `"regular_text": "This is just text"`) {
+		t.Error("Regular text should remain unchanged")
+	}
+}
+
+func TestIsJSONString(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{`{"key":"value"}`, true},
+		{`[1,2,3]`, true},
+		{`  {"key":"value"}  `, true}, // with whitespace
+		{`"just a string"`, false},
+		{`regular text`, false},
+		{``, false},
+		{`{incomplete`, false},
+		{`{"valid": "json"}extra`, false},
+	}
+
+	for _, test := range tests {
+		// Test by checking if PrettyPrintWithNestedExpansion would expand it
+		// This is an indirect way to test the JSON string detection logic
+		input := `{"test":"` + strings.ReplaceAll(test.input, `"`, `\"`) + `"}`
+		result := jsonutil.PrettyPrintWithNestedExpansion(input)
+
+		// If the input was treated as JSON, it should be expanded
+		// If it wasn't, it should remain as a simple string value
+		containsExpansion := strings.Contains(result, `"test": {`) || strings.Contains(result, `"test": [`)
+
+		if test.expected && !containsExpansion {
+			t.Errorf("Expected %q to be detected as JSON, but it wasn't expanded", test.input)
+		} else if !test.expected && containsExpansion {
+			t.Errorf("Expected %q to NOT be detected as JSON, but it was expanded", test.input)
 		}
 	}
 }

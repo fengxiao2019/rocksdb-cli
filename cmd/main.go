@@ -1,12 +1,12 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"rocksdb-cli/internal/db"
+	"rocksdb-cli/internal/jsonutil"
 	"rocksdb-cli/internal/repl"
 	"syscall"
 	"time"
@@ -81,21 +81,12 @@ SCAN OPTIONS:
 For more information, visit: https://github.com/yourusername/rocksdb-cli
 `
 
-// formatValue formats a value based on pretty flag (same as in command package)
+// formatValue formats a value based on pretty flag using jsonutil
 func formatValue(value string, pretty bool) string {
 	if !pretty {
 		return value
 	}
-
-	var jsonData interface{}
-	if err := json.Unmarshal([]byte(value), &jsonData); err != nil {
-		return value // If not valid JSON, return as is
-	}
-	prettyJSON, err := json.MarshalIndent(jsonData, "", "  ")
-	if err != nil {
-		return value // If can't pretty print, return as is
-	}
-	return string(prettyJSON)
+	return jsonutil.PrettyPrintWithNestedExpansion(value)
 }
 
 func main() {

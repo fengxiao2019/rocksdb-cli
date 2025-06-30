@@ -2,11 +2,11 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"rocksdb-cli/internal/db"
+	"rocksdb-cli/internal/jsonutil"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -432,19 +432,9 @@ func (tm *ToolManager) handleGetLastTool(ctx context.Context, request mcp.CallTo
 	return mcp.NewToolResultText(fmt.Sprintf("Last entry in column family '%s':\nKey: %s\nValue: %s", cf, key, result)), nil
 }
 
-// Helper function to format JSON values
+// formatJSONValue formats JSON values with recursive nested JSON expansion using jsonutil
 func (tm *ToolManager) formatJSONValue(value string) string {
-	var jsonData interface{}
-	if err := json.Unmarshal([]byte(value), &jsonData); err != nil {
-		return value // If not valid JSON, return as is
-	}
-
-	prettyJSON, err := json.MarshalIndent(jsonData, "", "  ")
-	if err != nil {
-		return value // If can't pretty print, return as is
-	}
-
-	return string(prettyJSON)
+	return jsonutil.PrettyPrintWithNestedExpansion(value)
 }
 
 // IsToolEnabled checks if a specific tool is enabled based on configuration

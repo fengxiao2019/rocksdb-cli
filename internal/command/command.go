@@ -1,10 +1,10 @@
 package command
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"rocksdb-cli/internal/db"
+	"rocksdb-cli/internal/jsonutil"
 	"strconv"
 	"strings"
 	"time"
@@ -19,16 +19,9 @@ type Handler struct {
 	State interface{} // *ReplState, used to manage the active column family
 }
 
+// prettyPrintJSON formats JSON with recursive nested expansion using jsonutil
 func prettyPrintJSON(val string) string {
-	var jsonData interface{}
-	if err := json.Unmarshal([]byte(val), &jsonData); err != nil {
-		return val // If not valid JSON, return as is
-	}
-	prettyJSON, err := json.MarshalIndent(jsonData, "", "  ")
-	if err != nil {
-		return val // If can't pretty print, return as is
-	}
-	return string(prettyJSON)
+	return jsonutil.PrettyPrintWithNestedExpansion(val)
 }
 
 // handleError provides user-friendly error messages for specific error types
