@@ -2,7 +2,7 @@
 # Pre-compiled RocksDB v10.2.1 with Go 1.21 environment
 # This base image can be pushed to Docker Hub for reuse in CI/CD
 
-FROM golang:1.21-bullseye
+FROM golang:1.23-bullseye
 
 ENV DEBIAN_FRONTEND=noninteractive
 

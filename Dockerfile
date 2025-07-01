@@ -7,7 +7,7 @@
 # 运行命令:
 #   docker run -it --rm -v "/path/to/db:/data" rocksdb-cli --db /data
 
-FROM golang:1.21-bullseye AS builder
+FROM golang:1.23-bullseye AS builder
 
 ARG HTTP_PROXY
 ARG HTTPS_PROXY
