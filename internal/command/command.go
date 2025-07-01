@@ -401,25 +401,59 @@ func (h *Handler) Execute(input string) bool {
 			fmt.Println("OK")
 		}
 	case "prefix":
-		cf, prefix := "", ""
-		if len(parts) == 2 && h.State != nil {
-			if s, ok := h.State.(*ReplState); ok {
-				cf = s.CurrentCF
-				prefix = parts[1]
+		// Get current CF if available
+		currentCF := ""
+		if s, ok := h.State.(*ReplState); ok && s != nil {
+			currentCF = s.CurrentCF
+		}
+
+		// Parse flags and arguments
+		flags, args := parseFlags(parts[1:])
+		pretty := flags["pretty"] == "true"
+
+		var cf, prefix string
+
+		switch len(args) {
+		case 1: // prefix <prefix> (using current CF)
+			if currentCF == "" {
+				fmt.Println("No current column family set")
+				return true
 			}
-		} else if len(parts) == 3 {
-			cf = parts[1]
-			prefix = parts[2]
-		} else {
-			fmt.Println("Usage: prefix [<cf>] <prefix>")
+			cf = currentCF
+			prefix = args[0]
+		case 2: // prefix <cf> <prefix>
+			cf = args[0]
+			prefix = args[1]
+		default:
+			fmt.Println("Usage: prefix [<cf>] <prefix> [--pretty]")
+			fmt.Println("  Query by key prefix (use --pretty for JSON formatting)")
 			return true
 		}
+
 		result, err := h.DB.PrefixScanCF(cf, prefix, 20)
 		if err != nil {
 			handleError(err, "Prefix scan", cf)
 		} else {
-			for k, v := range result {
-				fmt.Printf("%s: %s\n", k, v)
+			// Sort keys to ensure consistent output order
+			keys := make([]string, 0, len(result))
+			for k := range result {
+				keys = append(keys, k)
+			}
+
+			// Sort in lexicographical order
+			for i := 0; i < len(keys)-1; i++ {
+				for j := i + 1; j < len(keys); j++ {
+					if keys[i] > keys[j] {
+						keys[i], keys[j] = keys[j], keys[i]
+					}
+				}
+			}
+
+			// Output in sorted order with optional pretty printing
+			for _, k := range keys {
+				v := result[k]
+				formattedValue := formatValue(v, pretty)
+				fmt.Printf("%s: %s\n", k, formattedValue)
 			}
 		}
 	case "listcf":
@@ -583,7 +617,7 @@ func (h *Handler) Execute(input string) bool {
 		fmt.Println("  usecf <cf>                    - Switch current column family")
 		fmt.Println("  get [<cf>] <key> [--pretty]   - Query by key (use --pretty for JSON formatting)")
 		fmt.Println("  put [<cf>] <key> <value>      - Insert/Update key-value pair")
-		fmt.Println("  prefix [<cf>] <prefix>        - Query by key prefix")
+		fmt.Println("  prefix [<cf>] <prefix> [--pretty] - Query by key prefix (use --pretty for JSON formatting)")
 		fmt.Println("  scan [<cf>] [start] [end]     - Scan range with options")
 		fmt.Println("    Options: --limit=N --reverse --values=no --timestamp")
 		fmt.Println("    Use * as wildcard to scan all entries (e.g., scan * or scan * *)")

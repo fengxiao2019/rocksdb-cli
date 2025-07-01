@@ -489,6 +489,40 @@ func TestHandler_Execute(t *testing.T) {
 			},
 		},
 		{
+			name:  "prefix scan with pretty flag",
+			input: "prefix user --pretty",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.PutCF("default", "user1", `{"name":"Alice","age":25}`)
+				db.PutCF("default", "user2", `{"name":"Bob","age":30}`)
+				db.PutCF("default", "product1", "other_data")
+			},
+			wantErr: false,
+			validate: func(t *testing.T, db *mockDB, state *ReplState) {
+				result, err := db.PrefixScanCF("default", "user", 20)
+				if err != nil || len(result) != 2 {
+					t.Errorf("Prefix scan with pretty failed: got %d results, want 2", len(result))
+				}
+			},
+		},
+		{
+			name:  "prefix scan with explicit CF and pretty",
+			input: "prefix testcf user --pretty",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.CreateCF("testcf")
+				db.PutCF("testcf", "user1", `{"id":1,"name":"Alice"}`)
+				db.PutCF("testcf", "user2", `{"id":2,"name":"Bob"}`)
+			},
+			wantErr: false,
+			validate: func(t *testing.T, db *mockDB, state *ReplState) {
+				result, err := db.PrefixScanCF("testcf", "user", 20)
+				if err != nil || len(result) != 2 {
+					t.Errorf("Prefix scan with CF and pretty failed: got %d results, want 2", len(result))
+				}
+			},
+		},
+		{
 			name:  "scan with start and end",
 			input: "scan key1 key4",
 			setup: func(db *mockDB, state *ReplState) {
