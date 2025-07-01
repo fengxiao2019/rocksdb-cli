@@ -275,7 +275,36 @@ func (h *Handler) Execute(input string) bool {
 		if err != nil {
 			handleError(err, "Scan", cf)
 		} else {
-			for k, v := range result {
+			// Sort keys to ensure consistent output order
+			keys := make([]string, 0, len(result))
+			for k := range result {
+				keys = append(keys, k)
+			}
+
+			// Sort keys based on scan direction
+			if opts.Reverse {
+				// Sort in reverse lexicographical order
+				for i := 0; i < len(keys)-1; i++ {
+					for j := i + 1; j < len(keys); j++ {
+						if keys[i] < keys[j] {
+							keys[i], keys[j] = keys[j], keys[i]
+						}
+					}
+				}
+			} else {
+				// Sort in forward lexicographical order
+				for i := 0; i < len(keys)-1; i++ {
+					for j := i + 1; j < len(keys); j++ {
+						if keys[i] > keys[j] {
+							keys[i], keys[j] = keys[j], keys[i]
+						}
+					}
+				}
+			}
+
+			// Output in sorted order
+			for _, k := range keys {
+				v := result[k]
 				if showTimestamp {
 					if timestamp := parseTimestamp(k); timestamp != "" {
 						if opts.Values {

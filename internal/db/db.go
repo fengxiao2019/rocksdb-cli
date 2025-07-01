@@ -179,6 +179,9 @@ func (d *DB) ScanCF(cf string, start, end []byte, opts ScanOptions) (map[string]
 		// For reverse scan, we start from end and go backwards to start
 		if len(end) > 0 {
 			it.SeekForPrev(end)
+		} else if len(start) > 0 {
+			// Fix: when only start is specified, start from start key, not last record
+			it.SeekForPrev(start)
 		} else {
 			it.SeekToLast()
 		}
@@ -198,8 +201,8 @@ func (d *DB) ScanCF(cf string, start, end []byte, opts ScanOptions) (map[string]
 
 		// Check bounds based on direction
 		if opts.Reverse {
-			// For reverse scan: stop when we reach below start
-			if len(start) > 0 && kStr < startStr {
+			// For reverse scan: stop when we reach below start (only if end is also specified)
+			if len(start) > 0 && len(end) > 0 && kStr < startStr {
 				k.Free()
 				break
 			}

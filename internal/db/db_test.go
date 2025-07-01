@@ -250,6 +250,31 @@ func TestDB_Scan(t *testing.T) {
 			},
 		},
 		{
+			name:  "reverse scan with only start key",
+			start: []byte("key3"),
+			end:   nil,
+			opts:  ScanOptions{Reverse: true, Values: true},
+			validate: func(t *testing.T, result map[string]string) {
+				// Should start from key3 and scan backwards to key1
+				expectedKeys := []string{"key3", "key2", "key1"}
+				if len(result) != len(expectedKeys) {
+					t.Errorf("Reverse scan result count = %d, want %d", len(result), len(expectedKeys))
+				}
+				for _, key := range expectedKeys {
+					if v, ok := result[key]; !ok || v != "value"+key[3:] {
+						t.Errorf("Reverse scan result missing or wrong value for %s: got %v", key, v)
+					}
+				}
+				// Verify that key4 and key5 are NOT included (since we start from key3)
+				if _, ok := result["key4"]; ok {
+					t.Errorf("Reverse scan should not include key4 when starting from key3")
+				}
+				if _, ok := result["key5"]; ok {
+					t.Errorf("Reverse scan should not include key5 when starting from key3")
+				}
+			},
+		},
+		{
 			name:  "scan with limit",
 			start: []byte("key1"),
 			end:   nil,
