@@ -2,17 +2,48 @@
 
 An interactive RocksDB command-line tool written in Go, with support for multiple column families (CF).
 
+## Table of Contents
+- [Quick Start](#quick-start)
+- [Features](#features)
+- [Installation and Build Process](#installation-and-build-process)
+- [Usage](#usage)
+  - [Command Line Help](#command-line-help)
+  - [Interactive Mode](#interactive-mode)
+  - [Direct Command Usage](#direct-command-usage)
+    - [Prefix Scan](#prefix-scan)
+    - [Range Scan](#range-scan)
+- [Interactive Commands](#interactive-commands)
+- [JSON Features](#json-pretty-print)
+- [Generate Test Database](#generate-test-database)
+
+## Quick Start
+
+```bash
+# Interactive mode
+rocksdb-cli --db /path/to/database
+
+# Find keys by prefix
+rocksdb-cli --db /path/to/database --prefix users --prefix-key "user:"
+
+# Scan key ranges
+rocksdb-cli --db /path/to/database --scan users --start "user:1000" --end "user:2000" --pretty
+
+# Get last entry
+rocksdb-cli --db /path/to/database --last users --pretty
+```
+
 ## Features
-- Interactive command-line (REPL)
-- Query by key with JSON pretty print support
-- Query by prefix and range scanning
+- **Interactive command-line (REPL)** - Full-featured REPL with command history
+- **Query by key** with JSON pretty print support
+- **Prefix scanning** - Find keys starting with specific patterns (both interactive and command-line)
+- **Range scanning** - Scan key ranges with flexible options (reverse, limit, keys-only)
 - **JSON field querying** - Search entries by JSON field values
-- Insert/Update key-value pairs
-- Multiple column family (CF) management and operations
-- CSV export functionality
-- Real-time monitoring with watch mode
-- Docker support for easy deployment
-- Clear structure, easy to maintain and extend
+- **Data manipulation** - Insert/Update key-value pairs
+- **Column family management** - Full support for multiple column families
+- **CSV export functionality** - Export column families to CSV files
+- **Real-time monitoring** - Watch mode for live data changes
+- **Docker support** - Easy deployment with pre-built Docker images
+- **Read-only mode** - Safe concurrent access for production environments
 
 ## Project Structure
 ```
@@ -62,6 +93,12 @@ docker run -it --rm -v "/path/to/your/db:/data" rocksdb-cli --db /data
 
 # Command-line usage
 docker run --rm -v "/path/to/your/db:/data" rocksdb-cli --db /data --last users --pretty
+
+# Prefix scan
+docker run --rm -v "/path/to/your/db:/data" rocksdb-cli --db /data --prefix users --prefix-key "user:" --pretty
+
+# Range scan
+docker run --rm -v "/path/to/your/db:/data" rocksdb-cli --db /data --scan users --start "user:1000" --limit 10
 
 # CSV export
 docker run --rm -v "/path/to/your/db:/data" -v "$PWD:/output" rocksdb-cli --db /data --export-cf users --export-file /output/users.csv
@@ -188,6 +225,34 @@ rocksdb-cli --db /path/to/db --last users
 rocksdb-cli --db /path/to/db --last users --pretty
 ```
 
+#### Prefix Scan
+```sh
+# Scan keys starting with a specific prefix
+rocksdb-cli --db /path/to/db --prefix users --prefix-key "user:"
+
+# Prefix scan with pretty JSON formatting
+rocksdb-cli --db /path/to/db --prefix users --prefix-key "user:" --pretty
+
+# Example output:
+# user:1001: {"id":1001,"name":"Alice","email":"alice@example.com"}
+# user:1002: {"id":1002,"name":"Bob","email":"bob@example.com"}
+```
+
+#### Range Scan
+```sh
+# Scan all entries in a column family
+rocksdb-cli --db /path/to/db --scan users
+
+# Scan with range
+rocksdb-cli --db /path/to/db --scan users --start "user:1000" --end "user:2000"
+
+# Scan with options
+rocksdb-cli --db /path/to/db --scan users --start "user:1000" --limit 10 --reverse
+
+# Keys only (no values)
+rocksdb-cli --db /path/to/db --scan users --keys-only
+```
+
 #### CSV Export
 ```sh
 # Export column family to CSV
@@ -216,7 +281,7 @@ dropcf <cf>                  # Drop column family
 # Data operations
 get [<cf>] <key> [--pretty]  # Query by key (use --pretty for JSON formatting)
 put [<cf>] <key> <value>     # Insert/Update key-value pair
-prefix [<cf>] <prefix>       # Query by key prefix
+prefix [<cf>] <prefix> [--pretty]  # Query by key prefix (supports --pretty for JSON)
 last [<cf>] [--pretty]       # Get last key-value pair from CF
 
 # Advanced operations
@@ -234,17 +299,19 @@ There are two ways to use commands:
 
 1. **Set current CF and use simplified commands:**
 ```
-usecf users       # Set current CF
-get user:1001     # Use current CF
+usecf users                      # Set current CF
+get user:1001                    # Use current CF
 put user:1006 {"name":"Alice","age":25}
-prefix user:      # Use current CF
+prefix user:                     # Use current CF for prefix scan
+prefix user: --pretty            # Use current CF with pretty JSON formatting
 ```
 
 2. **Explicitly specify CF in commands:**
 ```
-get users user:1001
+get users user:1001                      # Specify CF in command
 put users user:1006 {"name":"Alice","age":25}
-prefix users user:
+prefix users user:                       # Specify CF for prefix scan
+prefix users user: --pretty              # Specify CF with pretty formatting
 ```
 
 ### JSON Pretty Print
@@ -358,14 +425,16 @@ rocksdb-cli --db ./testdb
 # In REPL:
 > listcf                     # List all column families
 > usecf users               # Switch to users
-> prefix user:              # Get all users
-> get user:1001 --pretty    # Get user with JSON formatting
+> prefix user:              # Get all users starting with "user:"
+> prefix user: --pretty     # Get all users with pretty JSON formatting
+> get user:1001 --pretty    # Get specific user with JSON formatting
 > jsonquery name Alice      # Find users named Alice
 > jsonquery users age 25    # Find users aged 25
 > scan user:1001 user:1005  # Scan range of users
 > export users users.csv    # Export to CSV
 > usecf logs               # Switch to logs
-> jsonquery level ERROR     # Find error logs
+> prefix error:             # Get all error logs starting with "error:"
+> jsonquery level ERROR     # Find error logs by JSON field
 > watch logs --interval 1s  # Watch for new log entries
 ```
 

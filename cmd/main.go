@@ -28,74 +28,80 @@ DESCRIPTION:
 OPTIONS:
     --db <path>                  Path to RocksDB database (required)
     --read-only                  Open database in read-only mode (safe for concurrent access)
+    --help                       Show this help message
+
+DATA QUERY OPTIONS:
     --last <cf>                  Get the last key-value pair from column family
-    --pretty                     Pretty print JSON values (use with --last)
-    --export-cf <cf>             Column family to export (use with --export-file)
-    --export-file <file>         Output CSV file path for export
+    --prefix <cf>                Column family for prefix scan
+    --prefix-key <prefix>        Key prefix to search for (use with --prefix)
     --scan <cf>                  Column family to scan
     --start <key>                Start key for scan (use with --scan, * for beginning)
     --end <key>                  End key for scan (use with --scan, * for end)
     --limit <N>                  Limit number of scan results (use with --scan)
     --reverse                    Scan in reverse order (use with --scan)
     --keys-only                  Show only keys, not values (use with --scan)
-    --prefix <cf>                Column family for prefix scan
-    --prefix-key <prefix>        Key prefix to search for (use with --prefix)
+    --pretty                     Pretty print JSON values (use with --last, --prefix)
+
+UTILITY OPTIONS:
+    --export-cf <cf>             Column family to export (use with --export-file)
+    --export-file <file>         Output CSV file path for export
     --watch <cf>                 Watch for new entries in column family (real-time)
     --interval <duration>        Watch interval (default: 1s, e.g., 500ms, 2s, 1m)
-    --help                       Show this help message
 
 EXAMPLES:
-    # Start interactive mode
+    # Interactive mode
     rocksdb-cli --db /path/to/db
+    rocksdb-cli --db /path/to/db --read-only  # Safe for concurrent access
 
-    # Start in read-only mode (safe for concurrent access)
-    rocksdb-cli --db /path/to/db --read-only
-
-    # Get last entry from a column family in read-only mode
-    rocksdb-cli --db /path/to/db --read-only --last users
-
-    # Get last entry with pretty-printed JSON
+    # Basic data queries
+    rocksdb-cli --db /path/to/db --last users
     rocksdb-cli --db /path/to/db --last users --pretty
 
-    # Export column family to CSV
-    rocksdb-cli --db /path/to/db --export-cf users --export-file users.csv
-
-    # Scan all entries in a column family
-    rocksdb-cli --db /path/to/db --scan users
-
-    # Scan with range and options
-    rocksdb-cli --db /path/to/db --scan users --start "user:1000" --end "user:2000" --limit 10
-
-    # Reverse scan with keys only
-    rocksdb-cli --db /path/to/db --scan users --reverse --keys-only
-
-    # Prefix scan for keys starting with pattern
+    # Prefix scanning (find keys starting with pattern)
     rocksdb-cli --db /path/to/db --prefix users --prefix-key "user:"
-
-    # Prefix scan with pretty JSON formatting
     rocksdb-cli --db /path/to/db --prefix users --prefix-key "user:" --pretty
+    rocksdb-cli --db /path/to/db --prefix logs --prefix-key "error:"
 
-    # Watch for new entries (real-time monitoring)
+    # Range scanning with options
+    rocksdb-cli --db /path/to/db --scan users
+    rocksdb-cli --db /path/to/db --scan users --start "user:1000" --end "user:2000"
+    rocksdb-cli --db /path/to/db --scan users --start "user:1000" --limit 10 --reverse
+    rocksdb-cli --db /path/to/db --scan users --keys-only
+
+    # Utility operations
+    rocksdb-cli --db /path/to/db --export-cf users --export-file users.csv
     rocksdb-cli --db /path/to/db --watch logs --interval 500ms
 
 INTERACTIVE COMMANDS:
     Once in interactive mode, you can use these commands:
     
+    # Column family management
     usecf <cf>                   Switch current column family
-    get [<cf>] <key> [--pretty]  Query by key (use --pretty for JSON formatting)
-    put [<cf>] <key> <value>     Insert/Update key-value pair
-    prefix [<cf>] <prefix>       Query by key prefix
-    scan [<cf>] [start] [end]    Scan range with options
-    last [<cf>] [--pretty]       Get last key-value pair from CF
-    export [<cf>] <file_path>    Export CF to CSV file
     listcf                       List all column families
     createcf <cf>                Create new column family
     dropcf <cf>                  Drop column family
+
+    # Data operations
+    get [<cf>] <key> [--pretty]  Query by key (use --pretty for JSON formatting)
+    put [<cf>] <key> <value>     Insert/Update key-value pair
+    prefix [<cf>] <prefix> [--pretty]  Query by key prefix (supports --pretty)
+    scan [<cf>] [start] [end] [options]  Scan range with options
+    last [<cf>] [--pretty]       Get last key-value pair from CF
+
+    # Utility operations
+    export [<cf>] <file_path>    Export CF to CSV file
     help                         Show interactive help
     exit/quit                    Exit the CLI
 
-    Note: Commands without [<cf>] use current column family shown in prompt
-    Note: Write operations (put, createcf, dropcf) are disabled in read-only mode
+    USAGE PATTERNS:
+    • Commands without [<cf>] use current column family shown in prompt
+    • Commands with [<cf>] can specify column family explicitly
+    • Write operations (put, createcf, dropcf) are disabled in read-only mode
+
+    PREFIX EXAMPLES:
+    prefix user:                 # Find all keys starting with "user:" in current CF
+    prefix users user:           # Find all keys starting with "user:" in "users" CF
+    prefix user: --pretty        # Same as first, but with pretty JSON formatting
 
 SCAN OPTIONS:
     --limit=N                    Limit number of results
