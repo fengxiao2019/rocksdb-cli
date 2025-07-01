@@ -16,12 +16,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Log in to GitHub Container Registry
-      run: echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-    
     - name: Build and test in Docker
       run: |
-        docker build -t rocksdb-cli-test -f Dockerfile.test .
+        docker build -t rocksdb-cli-test .
         docker run --rm rocksdb-cli-test
     
     - name: Extract coverage report
