@@ -400,6 +400,89 @@ func TestExecuteScanEmptyColumnFamily(t *testing.T) {
 	}
 }
 
+func TestExecutePrefix(t *testing.T) {
+	tests := []struct {
+		name      string
+		cf        string
+		prefix    string
+		pretty    bool
+		wantError bool
+		wantKeys  []string
+	}{
+		{
+			name:     "basic prefix scan",
+			cf:       "users",
+			prefix:   "user:",
+			pretty:   false,
+			wantKeys: []string{"user:1001", "user:1002", "user:1003", "user:nested"},
+		},
+		{
+			name:     "prefix scan with pretty",
+			cf:       "users",
+			prefix:   "user:",
+			pretty:   true,
+			wantKeys: []string{"user:1001", "user:1002", "user:1003", "user:nested"},
+		},
+		{
+			name:     "prefix scan with admin prefix",
+			cf:       "users",
+			prefix:   "admin:",
+			pretty:   false,
+			wantKeys: []string{"admin:001"},
+		},
+		{
+			name:     "prefix scan no matches",
+			cf:       "users",
+			prefix:   "nonexistent:",
+			pretty:   false,
+			wantKeys: []string{},
+		},
+		{
+			name:      "prefix scan non-existent cf",
+			cf:        "nonexistent",
+			prefix:    "test:",
+			pretty:    false,
+			wantError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockDB := newMockDB()
+
+			output := captureOutput(func() {
+				err := executePrefix(mockDB, tt.cf, tt.prefix, tt.pretty)
+				if (err != nil) != tt.wantError {
+					t.Errorf("executePrefix() error = %v, wantError %v", err, tt.wantError)
+					return
+				}
+			})
+
+			if tt.wantError {
+				return // Skip output validation for error cases
+			}
+
+			lines := strings.Split(strings.TrimSpace(output), "\n")
+			if len(lines) == 1 && lines[0] == "" {
+				lines = []string{} // Handle empty output
+			}
+
+			if len(lines) != len(tt.wantKeys) {
+				t.Errorf("Expected %d lines, got %d", len(tt.wantKeys), len(lines))
+				t.Errorf("Output: %q", output)
+				return
+			}
+
+			for i, line := range lines {
+				expectedKey := tt.wantKeys[i]
+				if !strings.HasPrefix(line, expectedKey+": ") {
+					t.Errorf("Line %d: expected line to start with %q, got %q", i, expectedKey+": ", line)
+				}
+			}
+		})
+	}
+}
+
 // Helper function to create string pointer
 func stringPtr(s string) *string {
 	return &s

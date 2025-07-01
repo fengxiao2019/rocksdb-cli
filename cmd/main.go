@@ -38,6 +38,8 @@ OPTIONS:
     --limit <N>                  Limit number of scan results (use with --scan)
     --reverse                    Scan in reverse order (use with --scan)
     --keys-only                  Show only keys, not values (use with --scan)
+    --prefix <cf>                Column family for prefix scan
+    --prefix-key <prefix>        Key prefix to search for (use with --prefix)
     --watch <cf>                 Watch for new entries in column family (real-time)
     --interval <duration>        Watch interval (default: 1s, e.g., 500ms, 2s, 1m)
     --help                       Show this help message
@@ -66,6 +68,12 @@ EXAMPLES:
 
     # Reverse scan with keys only
     rocksdb-cli --db /path/to/db --scan users --reverse --keys-only
+
+    # Prefix scan for keys starting with pattern
+    rocksdb-cli --db /path/to/db --prefix users --prefix-key "user:"
+
+    # Prefix scan with pretty JSON formatting
+    rocksdb-cli --db /path/to/db --prefix users --prefix-key "user:" --pretty
 
     # Watch for new entries (real-time monitoring)
     rocksdb-cli --db /path/to/db --watch logs --interval 500ms
@@ -158,6 +166,34 @@ func executeScan(rdb db.KeyValueDB, cf string, start, end *string, limit int, re
 	return nil
 }
 
+// executePrefix executes a prefix scan operation with the given parameters
+// This function avoids code duplication between interactive and non-interactive modes
+func executePrefix(rdb db.KeyValueDB, cf, prefix string, pretty bool) error {
+	// Execute prefix scan with default limit of 20 (same as interactive mode)
+	result, err := rdb.PrefixScanCF(cf, prefix, 20)
+	if err != nil {
+		return fmt.Errorf("prefix scan failed: %v", err)
+	}
+
+	// Sort keys to ensure consistent output order (same logic as interactive mode)
+	keys := make([]string, 0, len(result))
+	for k := range result {
+		keys = append(keys, k)
+	}
+
+	// Sort in lexicographical order
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+
+	// Output in sorted order with optional pretty printing
+	for _, k := range keys {
+		v := result[k]
+		formattedValue := formatValue(v, pretty)
+		fmt.Printf("%s: %s\n", k, formattedValue)
+	}
+
+	return nil
+}
+
 func main() {
 	// Custom usage function
 	flag.Usage = func() {
@@ -178,6 +214,9 @@ func main() {
 	scanLimit := flag.Int("limit", 0, "Limit number of scan results (use with --scan)")
 	scanReverse := flag.Bool("reverse", false, "Scan in reverse order (use with --scan)")
 	scanKeysOnly := flag.Bool("keys-only", false, "Show only keys, not values (use with --scan)")
+	// Prefix command flags
+	prefixCF := flag.String("prefix", "", "Column family for prefix scan")
+	prefixKey := flag.String("prefix-key", "", "Key prefix to search for (use with --prefix)")
 	helpFlag := flag.Bool("help", false, "Show help message")
 	readOnlyFlag := flag.Bool("read-only", false, "Open database in read-only mode (safe for concurrent access)")
 	flag.Parse()
@@ -236,6 +275,21 @@ func main() {
 		err := executeScan(rdb, *scanCF, scanStart, scanEnd, *scanLimit, *scanReverse, *scanKeysOnly)
 		if err != nil {
 			fmt.Printf("Scan failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Handle prefix functionality
+	if *prefixCF != "" {
+		if *prefixKey == "" {
+			fmt.Println("Error: --prefix-key parameter is required when using --prefix")
+			fmt.Println("Usage: rocksdb-cli --db <path> --prefix <cf> --prefix-key <prefix> [--pretty]")
+			os.Exit(1)
+		}
+		err := executePrefix(rdb, *prefixCF, *prefixKey, *prettyFlag)
+		if err != nil {
+			fmt.Printf("Prefix scan failed: %v\n", err)
 			os.Exit(1)
 		}
 		return
@@ -309,6 +363,15 @@ func main() {
 		if *scanCF == "" {
 			fmt.Println("--scan <cf> must be specified when using scan options")
 			fmt.Println("Usage: rocksdb-cli --db <path> --scan <cf> [--start <key>] [--end <key>] [--limit <N>] [--reverse] [--keys-only]")
+			os.Exit(1)
+		}
+	}
+
+	// Check for prefix parameter errors
+	if *prefixKey != "" {
+		if *prefixCF == "" {
+			fmt.Println("--prefix <cf> must be specified when using --prefix-key")
+			fmt.Println("Usage: rocksdb-cli --db <path> --prefix <cf> --prefix-key <prefix> [--pretty]")
 			os.Exit(1)
 		}
 	}
