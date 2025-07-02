@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -176,6 +177,51 @@ func (tm *ToolManager) RegisterTools(s *server.MCPServer) error {
 		),
 	)
 	s.AddTool(getLastTool, tm.handleGetLastTool)
+
+	// RocksDB Search Tool
+	searchTool := mcp.NewTool("rocksdb_search",
+		mcp.WithDescription("Fuzzy search for keys and values in RocksDB"),
+		mcp.WithString("column_family",
+			mcp.Description("Column family name (defaults to 'default')"),
+		),
+		mcp.WithString("key_pattern",
+			mcp.Description("Key pattern to search for"),
+		),
+		mcp.WithString("value_pattern",
+			mcp.Description("Value pattern to search for"),
+		),
+		mcp.WithBoolean("use_regex",
+			mcp.Description("Use regex patterns instead of wildcards"),
+		),
+		mcp.WithBoolean("case_sensitive",
+			mcp.Description("Case sensitive search"),
+		),
+		mcp.WithBoolean("keys_only",
+			mcp.Description("Return only keys, not values"),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description("Maximum number of results (default: 50)"),
+		),
+		mcp.WithBoolean("pretty",
+			mcp.Description("Pretty print JSON values"),
+		),
+	)
+	s.AddTool(searchTool, tm.handleSearchTool)
+
+	// RocksDB Statistics Tool
+	statsTool := mcp.NewTool("rocksdb_get_stats",
+		mcp.WithDescription("Get database or column family statistics"),
+		mcp.WithString("column_family",
+			mcp.Description("Column family name (omit for database-wide stats)"),
+		),
+		mcp.WithBoolean("detailed",
+			mcp.Description("Show detailed statistics"),
+		),
+		mcp.WithBoolean("pretty",
+			mcp.Description("Pretty print JSON format"),
+		),
+	)
+	s.AddTool(statsTool, tm.handleStatsTool)
 
 	return nil
 }
@@ -432,9 +478,209 @@ func (tm *ToolManager) handleGetLastTool(ctx context.Context, request mcp.CallTo
 	return mcp.NewToolResultText(fmt.Sprintf("Last entry in column family '%s':\nKey: %s\nValue: %s", cf, key, result)), nil
 }
 
+// handleSearchTool performs fuzzy search in RocksDB
+func (tm *ToolManager) handleSearchTool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	cf := request.GetString("column_family", "default")
+	keyPattern := request.GetString("key_pattern", "")
+	valuePattern := request.GetString("value_pattern", "")
+	useRegex := request.GetBool("use_regex", false)
+	caseSensitive := request.GetBool("case_sensitive", false)
+	keysOnly := request.GetBool("keys_only", false)
+	pretty := request.GetBool("pretty", false)
+
+	limitFloat := request.GetFloat("limit", 50.0)
+	limit := int(limitFloat)
+	if limit <= 0 {
+		limit = 50
+	}
+
+	// Validate that at least one pattern is provided
+	if keyPattern == "" && valuePattern == "" {
+		return mcp.NewToolResultError("Must specify at least key_pattern or value_pattern"), nil
+	}
+
+	// Set up search options
+	searchOpts := db.SearchOptions{
+		KeyPattern:    keyPattern,
+		ValuePattern:  valuePattern,
+		UseRegex:      useRegex,
+		CaseSensitive: caseSensitive,
+		KeysOnly:      keysOnly,
+		Limit:         limit,
+	}
+
+	// Execute search
+	results, err := tm.db.SearchCF(cf, searchOpts)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Failed to search CF '%s': %v", cf, err)), nil
+	}
+
+	if len(results.Results) == 0 {
+		return mcp.NewToolResultText(fmt.Sprintf("No matches found in column family '%s'\nQuery took: %s", cf, results.QueryTime)), nil
+	}
+
+	// Format output
+	var output strings.Builder
+	limitedText := ""
+	if results.Limited {
+		limitedText = " (limited)"
+	}
+
+	output.WriteString(fmt.Sprintf("Search results in column family '%s' (%d matches%s, query took: %s):\n\n",
+		cf, len(results.Results), limitedText, results.QueryTime))
+
+	for i, result := range results.Results {
+		// Format matched fields display
+		matchedFieldsStr := ""
+		if len(result.MatchedFields) > 0 {
+			matchedFieldsStr = fmt.Sprintf(" (matched: %v)", result.MatchedFields)
+		}
+
+		output.WriteString(fmt.Sprintf("[%d] Key: %s%s\n", i+1, result.Key, matchedFieldsStr))
+
+		if !keysOnly {
+			resultValue := result.Value
+			if pretty {
+				resultValue = tm.formatJSONValue(result.Value)
+			}
+			output.WriteString(fmt.Sprintf("    Value: %s\n", resultValue))
+		}
+		if i < len(results.Results)-1 {
+			output.WriteString("\n")
+		}
+	}
+
+	return mcp.NewToolResultText(output.String()), nil
+}
+
+// handleStatsTool gets database or column family statistics
+func (tm *ToolManager) handleStatsTool(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	cf := request.GetString("column_family", "")
+	detailed := request.GetBool("detailed", false)
+	pretty := request.GetBool("pretty", false)
+
+	if cf == "" {
+		// Database-wide statistics
+		stats, err := tm.db.GetDatabaseStats()
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to get database stats: %v", err)), nil
+		}
+
+		if pretty {
+			// Return JSON format
+			jsonBytes, err := json.Marshal(stats)
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal stats to JSON: %v", err)), nil
+			}
+			return mcp.NewToolResultText(tm.formatJSONValue(string(jsonBytes))), nil
+		}
+
+		// Format human-readable output
+		var output strings.Builder
+		output.WriteString("=== Database Statistics ===\n")
+		output.WriteString(fmt.Sprintf("Column Families: %d\n", stats.ColumnFamilyCount))
+		output.WriteString(fmt.Sprintf("Total Keys: %s\n", tm.formatNumber(stats.TotalKeyCount)))
+		output.WriteString(fmt.Sprintf("Total Size: %s\n", tm.formatBytes(stats.TotalSize)))
+
+		if detailed && len(stats.ColumnFamilies) > 0 {
+			output.WriteString("\nColumn Family Details:\n")
+			for _, cfStats := range stats.ColumnFamilies {
+				output.WriteString(fmt.Sprintf("- %s: %s keys, %s\n",
+					cfStats.Name,
+					tm.formatNumber(cfStats.KeyCount),
+					tm.formatBytes(cfStats.TotalKeySize+cfStats.TotalValueSize)))
+			}
+		}
+
+		return mcp.NewToolResultText(output.String()), nil
+	} else {
+		// Column family specific statistics
+		stats, err := tm.db.GetCFStats(cf)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("Failed to get stats for CF '%s': %v", cf, err)), nil
+		}
+
+		if pretty {
+			// Return JSON format
+			jsonBytes, err := json.Marshal(stats)
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("Failed to marshal stats to JSON: %v", err)), nil
+			}
+			return mcp.NewToolResultText(tm.formatJSONValue(string(jsonBytes))), nil
+		}
+
+		// Format human-readable output
+		var output strings.Builder
+		output.WriteString(fmt.Sprintf("=== Column Family: %s ===\n", stats.Name))
+		output.WriteString(fmt.Sprintf("Keys: %s\n", tm.formatNumber(stats.KeyCount)))
+		output.WriteString(fmt.Sprintf("Total Key Size: %s\n", tm.formatBytes(stats.TotalKeySize)))
+		output.WriteString(fmt.Sprintf("Total Value Size: %s\n", tm.formatBytes(stats.TotalValueSize)))
+
+		if stats.KeyCount > 0 {
+			output.WriteString(fmt.Sprintf("Average Key Size: %.1f bytes\n", stats.AverageKeySize))
+			output.WriteString(fmt.Sprintf("Average Value Size: %.1f bytes\n", stats.AverageValueSize))
+		}
+
+		// Data type distribution
+		if len(stats.DataTypeDistribution) > 0 {
+			output.WriteString("\nData Type Distribution:\n")
+			for dataType, count := range stats.DataTypeDistribution {
+				percentage := float64(count) / float64(stats.KeyCount) * 100
+				output.WriteString(fmt.Sprintf("  %-20s %s (%5.1f%%)\n",
+					dataType, tm.formatNumber(count), percentage))
+			}
+		}
+
+		// Additional details if requested
+		if detailed {
+			if len(stats.CommonPrefixes) > 0 {
+				output.WriteString("\nCommon Key Prefixes:\n")
+				for prefix, count := range stats.CommonPrefixes {
+					output.WriteString(fmt.Sprintf("  %-20s %s\n", prefix, tm.formatNumber(count)))
+				}
+			}
+
+			if len(stats.SampleKeys) > 0 {
+				output.WriteString("\nSample Keys:\n")
+				for _, key := range stats.SampleKeys {
+					output.WriteString(fmt.Sprintf("  %s\n", key))
+				}
+			}
+		}
+
+		return mcp.NewToolResultText(output.String()), nil
+	}
+}
+
 // formatJSONValue formats JSON values with recursive nested JSON expansion using jsonutil
 func (tm *ToolManager) formatJSONValue(value string) string {
 	return jsonutil.PrettyPrintWithNestedExpansion(value)
+}
+
+// formatNumber formats numbers with K/M/B suffixes for readability
+func (tm *ToolManager) formatNumber(num int64) string {
+	if num < 1000 {
+		return fmt.Sprintf("%d", num)
+	} else if num < 1000000 {
+		return fmt.Sprintf("%.1fK", float64(num)/1000)
+	} else if num < 1000000000 {
+		return fmt.Sprintf("%.1fM", float64(num)/1000000)
+	} else {
+		return fmt.Sprintf("%.1fB", float64(num)/1000000000)
+	}
+}
+
+// formatBytes formats byte counts with appropriate units
+func (tm *ToolManager) formatBytes(bytes int64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	} else if bytes < 1024*1024 {
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+	} else if bytes < 1024*1024*1024 {
+		return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
+	} else {
+		return fmt.Sprintf("%.1f GB", float64(bytes)/(1024*1024*1024))
+	}
 }
 
 // IsToolEnabled checks if a specific tool is enabled based on configuration
