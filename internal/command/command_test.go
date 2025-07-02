@@ -198,13 +198,98 @@ func (m *mockDB) IsReadOnly() bool {
 	return false // Mock DB is always read-write for testing
 }
 
+// SearchCF implements fuzzy search for testing
+func (m *mockDB) SearchCF(cf string, opts db.SearchOptions) (*db.SearchResults, error) {
+	if !m.cfExists[cf] {
+		return nil, db.ErrColumnFamilyNotFound
+	}
+
+	results := &db.SearchResults{
+		Results:   make([]db.SearchResult, 0),
+		Limited:   false,
+		QueryTime: "0ms", // Mock timing
+	}
+
+	cfData, ok := m.data[cf]
+	if !ok {
+		return results, nil
+	}
+
+	for key, value := range cfData {
+		var keyMatches, valueMatches bool
+		var matchedFields []string
+
+		// Simple substring matching for testing (not implementing full regex/wildcard logic)
+		if opts.KeyPattern != "" {
+			if opts.CaseSensitive {
+				keyMatches = strings.Contains(key, opts.KeyPattern)
+			} else {
+				keyMatches = strings.Contains(strings.ToLower(key), strings.ToLower(opts.KeyPattern))
+			}
+			if keyMatches {
+				matchedFields = append(matchedFields, "key")
+			}
+		}
+
+		if opts.ValuePattern != "" {
+			if opts.CaseSensitive {
+				valueMatches = strings.Contains(value, opts.ValuePattern)
+			} else {
+				valueMatches = strings.Contains(strings.ToLower(value), strings.ToLower(opts.ValuePattern))
+			}
+			if valueMatches {
+				matchedFields = append(matchedFields, "value")
+			}
+		}
+
+		// Determine if this entry should be included
+		shouldInclude := false
+		if opts.KeyPattern != "" && opts.ValuePattern != "" {
+			shouldInclude = keyMatches && valueMatches
+		} else if opts.KeyPattern != "" {
+			shouldInclude = keyMatches
+		} else if opts.ValuePattern != "" {
+			shouldInclude = valueMatches
+		}
+
+		if shouldInclude {
+			result := db.SearchResult{
+				Key:           key,
+				MatchedFields: matchedFields,
+			}
+			if !opts.KeysOnly {
+				result.Value = value
+			}
+			results.Results = append(results.Results, result)
+
+			// Check limit
+			if opts.Limit > 0 && len(results.Results) >= opts.Limit {
+				results.Limited = true
+				break
+			}
+		}
+	}
+
+	results.Total = len(results.Results)
+	return results, nil
+}
+
+// GetCFStats returns mock statistics for a column family
 func (m *mockDB) GetCFStats(cf string) (*db.CFStats, error) {
 	if !m.cfExists[cf] {
 		return nil, db.ErrColumnFamilyNotFound
 	}
 
+	cfData, ok := m.data[cf]
+	if !ok {
+		cfData = make(map[string]string)
+	}
+
 	stats := &db.CFStats{
 		Name:                    cf,
+		KeyCount:                int64(len(cfData)),
+		TotalKeySize:            0,
+		TotalValueSize:          0,
 		DataTypeDistribution:    make(map[db.DataType]int64),
 		KeyLengthDistribution:   make(map[string]int64),
 		ValueLengthDistribution: make(map[string]int64),
@@ -212,25 +297,23 @@ func (m *mockDB) GetCFStats(cf string) (*db.CFStats, error) {
 		SampleKeys:              make([]string, 0),
 	}
 
-	cfData := m.data[cf]
-	stats.KeyCount = int64(len(cfData))
-
 	for key, value := range cfData {
-		keyLen := int64(len(key))
-		valueLen := int64(len(value))
-		stats.TotalKeySize += keyLen
-		stats.TotalValueSize += valueLen
+		stats.TotalKeySize += int64(len(key))
+		stats.TotalValueSize += int64(len(value))
 
 		// Simple data type detection for mock
-		if len(value) == 0 {
+		if value == "" {
 			stats.DataTypeDistribution[db.DataTypeEmpty]++
-		} else if value[0] == '{' || value[0] == '[' {
+		} else if strings.HasPrefix(strings.TrimSpace(value), "{") {
 			stats.DataTypeDistribution[db.DataTypeJSON]++
 		} else {
 			stats.DataTypeDistribution[db.DataTypeString]++
 		}
 
-		stats.SampleKeys = append(stats.SampleKeys, key)
+		// Add sample keys (limit to 5)
+		if len(stats.SampleKeys) < 5 {
+			stats.SampleKeys = append(stats.SampleKeys, key)
+		}
 	}
 
 	if stats.KeyCount > 0 {
@@ -716,6 +799,15 @@ func TestHandler_Execute(t *testing.T) {
 			wantOut: "Column family 'key1' does not exist\n",
 			wantErr: false,
 		},
+		{
+			name:  "search non-existent CF",
+			input: "search nonexistent --key=test",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+			},
+			wantErr: false,
+			wantOut: "Column family 'nonexistent' does not exist\n",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1164,6 +1256,146 @@ func TestStatsErrorHandling(t *testing.T) {
 
 			if !strings.Contains(output, tt.expected) {
 				t.Errorf("Expected output to contain '%s', but got: %s", tt.expected, output)
+			}
+		})
+	}
+}
+
+func TestSearchCommand(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		setup   func(*mockDB, *ReplState)
+		wantErr bool
+		wantOut string // substring that should be in output
+	}{
+		{
+			name:  "search command help",
+			input: "search",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+			},
+			wantErr: false,
+			wantOut: "Usage: search",
+		},
+		{
+			name:  "search by key pattern",
+			input: "search --key=user",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.PutCF("default", "user:1001", "Alice")
+				db.PutCF("default", "user:1002", "Bob")
+				db.PutCF("default", "product:001", "Widget")
+			},
+			wantErr: false,
+			wantOut: "Found 2 matches",
+		},
+		{
+			name:  "search by value pattern",
+			input: "search --value=Alice",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.PutCF("default", "user:1001", "Alice Johnson")
+				db.PutCF("default", "user:1002", "Bob Smith")
+				db.PutCF("default", "admin:001", "Alice Admin")
+			},
+			wantErr: false,
+			wantOut: "Found 2 matches",
+		},
+		{
+			name:  "search with specific CF",
+			input: "search users --key=user",
+			setup: func(db *mockDB, state *ReplState) {
+				db.CreateCF("users")
+				db.PutCF("users", "user:1001", "Alice")
+				db.PutCF("users", "user:1002", "Bob")
+			},
+			wantErr: false,
+			wantOut: "Found 2 matches",
+		},
+		{
+			name:  "search with keys-only flag",
+			input: "search --key=user --keys-only",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.PutCF("default", "user:1001", "Alice")
+				db.PutCF("default", "user:1002", "Bob")
+			},
+			wantErr: false,
+			wantOut: "user:1001",
+		},
+		{
+			name:  "search with limit",
+			input: "search --key=user --limit=1",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.PutCF("default", "user:1001", "Alice")
+				db.PutCF("default", "user:1002", "Bob")
+				db.PutCF("default", "user:1003", "Charlie")
+			},
+			wantErr: false,
+			wantOut: "Found 1 matches (limited)",
+		},
+		{
+			name:  "search both key and value patterns",
+			input: "search --key=user --value=Alice",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.PutCF("default", "user:1001", "Alice Johnson")
+				db.PutCF("default", "user:1002", "Bob Smith")
+				db.PutCF("default", "admin:001", "Alice Admin")
+			},
+			wantErr: false,
+			wantOut: "Found 1 matches",
+		},
+		{
+			name:  "search with no matches",
+			input: "search --key=nonexistent",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.PutCF("default", "user:1001", "Alice")
+			},
+			wantErr: false,
+			wantOut: "No matches found",
+		},
+		{
+			name:  "search without pattern",
+			input: "search users",
+			setup: func(db *mockDB, state *ReplState) {
+				db.CreateCF("users")
+			},
+			wantErr: false,
+			wantOut: "Must specify at least --key or --value pattern",
+		},
+		{
+			name:  "search non-existent CF",
+			input: "search nonexistent --key=test",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+			},
+			wantErr: false,
+			wantOut: "Column family 'nonexistent' does not exist\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create handler and setup
+			handler, db := newTestHandler("default")
+			if tt.setup != nil {
+				tt.setup(db, handler.State.(*ReplState))
+			}
+
+			// Capture output
+			output := captureOutput(func() {
+				handler.Execute(tt.input)
+			})
+
+			// Check if expected substring is in output
+			if tt.wantOut != "" {
+				if !strings.Contains(output, tt.wantOut) {
+					t.Errorf("Expected output to contain '%s', got: %s", tt.wantOut, output)
+				}
 			}
 		})
 	}

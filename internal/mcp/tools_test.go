@@ -216,6 +216,77 @@ func (m *MockKeyValueDB) GetDatabaseStats() (*db.DatabaseStats, error) {
 	return stats, nil
 }
 
+func (m *MockKeyValueDB) SearchCF(cf string, opts db.SearchOptions) (*db.SearchResults, error) {
+	if _, exists := m.data[cf]; !exists {
+		return nil, db.ErrColumnFamilyNotFound
+	}
+
+	results := &db.SearchResults{
+		Results:   make([]db.SearchResult, 0),
+		Limited:   false,
+		QueryTime: "0ms", // Mock timing
+	}
+
+	cfData := m.data[cf]
+	for key, value := range cfData {
+		var keyMatches, valueMatches bool
+		var matchedFields []string
+
+		// Simple substring matching for testing
+		if opts.KeyPattern != "" {
+			if opts.CaseSensitive {
+				keyMatches = strings.Contains(key, opts.KeyPattern)
+			} else {
+				keyMatches = strings.Contains(strings.ToLower(key), strings.ToLower(opts.KeyPattern))
+			}
+			if keyMatches {
+				matchedFields = append(matchedFields, "key")
+			}
+		}
+
+		if opts.ValuePattern != "" {
+			if opts.CaseSensitive {
+				valueMatches = strings.Contains(value, opts.ValuePattern)
+			} else {
+				valueMatches = strings.Contains(strings.ToLower(value), strings.ToLower(opts.ValuePattern))
+			}
+			if valueMatches {
+				matchedFields = append(matchedFields, "value")
+			}
+		}
+
+		// Determine if this entry should be included
+		shouldInclude := false
+		if opts.KeyPattern != "" && opts.ValuePattern != "" {
+			shouldInclude = keyMatches && valueMatches
+		} else if opts.KeyPattern != "" {
+			shouldInclude = keyMatches
+		} else if opts.ValuePattern != "" {
+			shouldInclude = valueMatches
+		}
+
+		if shouldInclude {
+			result := db.SearchResult{
+				Key:           key,
+				MatchedFields: matchedFields,
+			}
+			if !opts.KeysOnly {
+				result.Value = value
+			}
+			results.Results = append(results.Results, result)
+
+			// Check limit
+			if opts.Limit > 0 && len(results.Results) >= opts.Limit {
+				results.Limited = true
+				break
+			}
+		}
+	}
+
+	results.Total = len(results.Results)
+	return results, nil
+}
+
 func TestNewToolManager(t *testing.T) {
 	mockDB := NewMockKeyValueDB()
 	config := DefaultConfig()

@@ -34,6 +34,13 @@ DATA QUERY OPTIONS:
     --last <cf>                  Get the last key-value pair from column family
     --prefix <cf>                Column family for prefix scan
     --prefix-key <prefix>        Key prefix to search for (use with --prefix)
+    --search <cf>                Column family for fuzzy search
+    --search-key <pattern>       Key pattern to search for (use with --search)
+    --search-value <pattern>     Value pattern to search for (use with --search)
+    --search-limit <N>           Limit search results (use with --search, default: 50)
+    --search-regex               Use regex patterns instead of wildcards (use with --search)
+    --search-case-sensitive      Case sensitive search (use with --search)
+    --search-keys-only           Show only keys, not values (use with --search)
     --scan <cf>                  Column family to scan
     --start <key>                Start key for scan (use with --scan, * for beginning)
     --end <key>                  End key for scan (use with --scan, * for end)
@@ -61,6 +68,13 @@ EXAMPLES:
     rocksdb-cli --db /path/to/db --prefix users --prefix-key "user:"
     rocksdb-cli --db /path/to/db --prefix users --prefix-key "user:" --pretty
     rocksdb-cli --db /path/to/db --prefix logs --prefix-key "error:"
+
+    # Fuzzy searching (find keys or values containing patterns)
+    rocksdb-cli --db /path/to/db --search users --search-key "user"
+    rocksdb-cli --db /path/to/db --search users --search-value "Alice"
+    rocksdb-cli --db /path/to/db --search users --search-key "temp:*" --search-value "Alice"
+    rocksdb-cli --db /path/to/db --search logs --search-value "Error" --search-limit 5
+    rocksdb-cli --db /path/to/db --search users --search-key "user:[0-9]+" --search-regex --pretty
 
     # Range scanning with options
     rocksdb-cli --db /path/to/db --scan users
@@ -200,6 +214,71 @@ func executePrefix(rdb db.KeyValueDB, cf, prefix string, pretty bool) error {
 	return nil
 }
 
+// executeSearch executes a search operation with the given parameters
+// This function avoids code duplication between interactive and non-interactive modes
+func executeSearch(rdb db.KeyValueDB, cf, keyPattern, valuePattern string, useRegex, caseSensitive, keysOnly bool, limit int, pretty bool) error {
+	// Validate that at least one pattern is provided
+	if keyPattern == "" && valuePattern == "" {
+		return fmt.Errorf("must specify at least --search-key or --search-value pattern")
+	}
+
+	// Set up search options
+	opts := db.SearchOptions{
+		KeyPattern:    keyPattern,
+		ValuePattern:  valuePattern,
+		UseRegex:      useRegex,
+		CaseSensitive: caseSensitive,
+		KeysOnly:      keysOnly,
+		Limit:         limit,
+	}
+
+	// Execute search
+	results, err := rdb.SearchCF(cf, opts)
+	if err != nil {
+		return fmt.Errorf("search failed: %v", err)
+	}
+
+	// Display results
+	if len(results.Results) == 0 {
+		fmt.Println("No matches found")
+		fmt.Printf("Query took: %s\n", results.QueryTime)
+		return nil
+	}
+
+	// Show header with result count and timing
+	limitedText := ""
+	if results.Limited {
+		limitedText = " (limited)"
+	}
+	fmt.Printf("Found %d matches%s in %s\n\n", len(results.Results), limitedText, results.QueryTime)
+
+	// Output results
+	for i, result := range results.Results {
+		// Format matched fields display
+		var matchedFields []string
+		for _, field := range result.MatchedFields {
+			matchedFields = append(matchedFields, field)
+		}
+		matchedFieldsStr := ""
+		if len(matchedFields) > 0 {
+			matchedFieldsStr = " (matched: " + fmt.Sprintf("%v", matchedFields) + ")"
+		}
+
+		fmt.Printf("[%d] Key: %s%s\n", i+1, result.Key, matchedFieldsStr)
+
+		if !keysOnly {
+			formattedValue := formatValue(result.Value, pretty)
+			fmt.Printf("    %s\n", formattedValue)
+		}
+		if i < len(results.Results)-1 {
+			fmt.Println()
+		}
+	}
+
+	fmt.Printf("\nQuery completed in %s\n", results.QueryTime)
+	return nil
+}
+
 func main() {
 	// Custom usage function
 	flag.Usage = func() {
@@ -223,6 +302,14 @@ func main() {
 	// Prefix command flags
 	prefixCF := flag.String("prefix", "", "Column family for prefix scan")
 	prefixKey := flag.String("prefix-key", "", "Key prefix to search for (use with --prefix)")
+	// Search command flags
+	searchCF := flag.String("search", "", "Column family for fuzzy search")
+	searchKey := flag.String("search-key", "", "Key pattern to search for (use with --search)")
+	searchValue := flag.String("search-value", "", "Value pattern to search for (use with --search)")
+	searchLimit := flag.Int("search-limit", 50, "Limit search results (use with --search, default: 50)")
+	searchRegex := flag.Bool("search-regex", false, "Use regex patterns instead of wildcards (use with --search)")
+	searchCaseSensitive := flag.Bool("search-case-sensitive", false, "Case sensitive search (use with --search)")
+	searchKeysOnly := flag.Bool("search-keys-only", false, "Show only keys, not values (use with --search)")
 	helpFlag := flag.Bool("help", false, "Show help message")
 	readOnlyFlag := flag.Bool("read-only", false, "Open database in read-only mode (safe for concurrent access)")
 	flag.Parse()
@@ -301,6 +388,34 @@ func main() {
 		return
 	}
 
+	// Check for prefix parameter errors
+	if *prefixKey != "" {
+		if *prefixCF == "" {
+			fmt.Println("--prefix <cf> must be specified when using --prefix-key")
+			fmt.Println("Usage: rocksdb-cli --db <path> --prefix <cf> --prefix-key <prefix> [--pretty]")
+			os.Exit(1)
+		}
+	}
+
+	// Check for search parameter errors
+	if *searchKey != "" || *searchValue != "" || *searchLimit != 50 || *searchRegex || *searchCaseSensitive || *searchKeysOnly {
+		if *searchCF == "" {
+			fmt.Println("--search <cf> must be specified when using search options")
+			fmt.Println("Usage: rocksdb-cli --db <path> --search <cf> [--search-key <pattern>] [--search-value <pattern>] [options]")
+			os.Exit(1)
+		}
+	}
+
+	// Handle search functionality
+	if *searchCF != "" {
+		err := executeSearch(rdb, *searchCF, *searchKey, *searchValue, *searchRegex, *searchCaseSensitive, *searchKeysOnly, *searchLimit, *prettyFlag)
+		if err != nil {
+			fmt.Printf("Search failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	// Handle watch functionality
 	if *watchCF != "" {
 		fmt.Printf("Watching column family '%s' for new entries (interval: %v)...\n", *watchCF, *watchInterval)
@@ -369,15 +484,6 @@ func main() {
 		if *scanCF == "" {
 			fmt.Println("--scan <cf> must be specified when using scan options")
 			fmt.Println("Usage: rocksdb-cli --db <path> --scan <cf> [--start <key>] [--end <key>] [--limit <N>] [--reverse] [--keys-only]")
-			os.Exit(1)
-		}
-	}
-
-	// Check for prefix parameter errors
-	if *prefixKey != "" {
-		if *prefixCF == "" {
-			fmt.Println("--prefix <cf> must be specified when using --prefix-key")
-			fmt.Println("Usage: rocksdb-cli --db <path> --prefix <cf> --prefix-key <prefix> [--pretty]")
 			os.Exit(1)
 		}
 	}

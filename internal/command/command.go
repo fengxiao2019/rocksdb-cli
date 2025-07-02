@@ -649,6 +649,118 @@ func (h *Handler) Execute(input string) bool {
 			fmt.Println("    stats --pretty           # Pretty JSON output")
 			return true
 		}
+	case "search":
+		// Get current CF if available
+		currentCF := ""
+		if s, ok := h.State.(*ReplState); ok && s != nil {
+			currentCF = s.CurrentCF
+		}
+
+		// Parse flags and arguments
+		flags, args := parseFlags(parts[1:])
+
+		var cf string
+		var keyPattern, valuePattern string
+
+		// Extract patterns from flags first
+		keyPattern = flags["key"]
+		valuePattern = flags["value"]
+
+		// Parse command syntax variations
+		switch len(args) {
+		case 0:
+			// Either help request or search with only flags
+			if keyPattern == "" && valuePattern == "" {
+				// Show help if no patterns provided
+				fmt.Println("Usage: search [<cf>] [options]")
+				fmt.Println("  Fuzzy search for keys and/or values in column family")
+				fmt.Println("")
+				fmt.Println("Options:")
+				fmt.Println("  --key=<pattern>       Search in key names")
+				fmt.Println("  --value=<pattern>     Search in values")
+				fmt.Println("  --regex               Use regex patterns (default: wildcard)")
+				fmt.Println("  --case-sensitive      Case sensitive search (default: false)")
+				fmt.Println("  --limit=N             Limit results (default: 50)")
+				fmt.Println("  --keys-only           Show only keys, not values")
+				fmt.Println("  --pretty              Pretty format JSON values")
+				fmt.Println("")
+				fmt.Println("Pattern Syntax:")
+				fmt.Println("  Wildcard: * (any chars), ? (single char)")
+				fmt.Println("  Regex: full regex support with --regex flag")
+				fmt.Println("")
+				fmt.Println("Examples:")
+				fmt.Println("  search --key=user:*               # Keys starting with 'user:'")
+				fmt.Println("  search users --value=Alice        # Values containing 'Alice' in 'users' CF")
+				fmt.Println("  search --key=*product* --value=*widget*  # Both key and value patterns")
+				fmt.Println("  search --key=user:[0-9]+ --regex  # Regex: keys matching 'user:' + digits")
+				fmt.Println("  search --value=error --limit=10    # First 10 entries with 'error' in value")
+				return true
+			} else {
+				// Use current CF when only flags are provided
+				if currentCF == "" {
+					fmt.Println("No current column family set")
+					return true
+				}
+				cf = currentCF
+			}
+		case 1:
+			// search <cf> or search with --key/--value flags only
+			if !strings.HasPrefix(args[0], "--") {
+				cf = args[0]
+			} else {
+				if currentCF == "" {
+					fmt.Println("No current column family set")
+					return true
+				}
+				cf = currentCF
+			}
+		default:
+			// search <cf> with additional arguments
+			cf = args[0]
+		}
+
+		// Validate that at least one pattern is provided
+		if keyPattern == "" && valuePattern == "" {
+			fmt.Println("Error: Must specify at least --key or --value pattern")
+			return true
+		}
+
+		// If no CF specified, use current CF
+		if cf == "" {
+			if currentCF == "" {
+				fmt.Println("No current column family set")
+				return true
+			}
+			cf = currentCF
+		}
+
+		// Build search options
+		opts := db.SearchOptions{
+			KeyPattern:    keyPattern,
+			ValuePattern:  valuePattern,
+			UseRegex:      flags["regex"] == "true",
+			CaseSensitive: flags["case-sensitive"] == "true",
+			KeysOnly:      flags["keys-only"] == "true",
+			Limit:         50, // Default limit
+		}
+
+		// Parse limit
+		if limitStr, ok := flags["limit"]; ok {
+			if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 {
+				opts.Limit = limit
+			} else {
+				fmt.Println("Invalid limit value")
+				return true
+			}
+		}
+
+		// Execute search
+		results, err := h.DB.SearchCF(cf, opts)
+		if err != nil {
+			handleError(err, "Search", cf)
+		} else {
+			h.formatSearchResults(results, flags["pretty"] == "true")
+		}
 	case "help":
 		fmt.Println("Available commands:")
 		fmt.Println("  usecf <cf>                    - Switch current column family")
@@ -665,6 +777,7 @@ func (h *Handler) Execute(input string) bool {
 		fmt.Println("  listcf                        - List all column families")
 		fmt.Println("  createcf <cf>                 - Create new column family")
 		fmt.Println("  dropcf <cf>                   - Drop column family")
+		fmt.Println("  search [<cf>] [options]        - Fuzzy search for keys and/or values")
 		fmt.Println("  help                          - Show this help message")
 		fmt.Println("  exit/quit                     - Exit the CLI")
 		fmt.Println("")
@@ -838,4 +951,54 @@ func formatBytes(bytes int64) string {
 	} else {
 		return fmt.Sprintf("%.1f GB", float64(bytes)/(1024*1024*1024))
 	}
+}
+
+// formatSearchResults formats and displays search results
+func (h *Handler) formatSearchResults(results *db.SearchResults, pretty bool) {
+	if len(results.Results) == 0 {
+		fmt.Println("No matches found")
+		fmt.Printf("Query took: %s\n", results.QueryTime)
+		return
+	}
+
+	// Show header with result count and timing
+	limitedText := ""
+	if results.Limited {
+		limitedText = " (limited)"
+	}
+	fmt.Printf("Found %d matches%s in %s\n", results.Total, limitedText, results.QueryTime)
+	fmt.Println()
+
+	// Display results
+	for i, result := range results.Results {
+		// Show result number
+		fmt.Printf("[%d] Key: %s", i+1, result.Key)
+
+		// Show which fields matched
+		if len(result.MatchedFields) > 0 {
+			fmt.Printf(" (matched: %s)", strings.Join(result.MatchedFields, ", "))
+		}
+		fmt.Println()
+
+		// Show value if not keys-only
+		if result.Value != "" {
+			valueToDisplay := result.Value
+			if pretty {
+				valueToDisplay = formatValue(result.Value, true)
+			}
+			// Indent value for better readability
+			valueLines := strings.Split(valueToDisplay, "\n")
+			for _, line := range valueLines {
+				fmt.Printf("    %s\n", line)
+			}
+		}
+
+		// Add separator between results (except for last one)
+		if i < len(results.Results)-1 {
+			fmt.Println()
+		}
+	}
+
+	// Show footer with timing
+	fmt.Printf("\nQuery completed in %s\n", results.QueryTime)
 }

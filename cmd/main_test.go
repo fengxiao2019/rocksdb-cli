@@ -254,21 +254,96 @@ func (m *mockDB) GetCFStats(cf string) (*db.CFStats, error) {
 }
 
 func (m *mockDB) GetDatabaseStats() (*db.DatabaseStats, error) {
-	stats := &db.DatabaseStats{
-		ColumnFamilies:    make([]db.CFStats, 0),
-		ColumnFamilyCount: len(m.cfExists),
-	}
-
+	cfs := []db.CFStats{}
 	for cf := range m.cfExists {
 		cfStats, err := m.GetCFStats(cf)
 		if err == nil {
-			stats.ColumnFamilies = append(stats.ColumnFamilies, *cfStats)
-			stats.TotalKeyCount += cfStats.KeyCount
-			stats.TotalSize += cfStats.TotalKeySize + cfStats.TotalValueSize
+			cfs = append(cfs, *cfStats)
 		}
 	}
 
+	stats := &db.DatabaseStats{
+		ColumnFamilies:    cfs,
+		ColumnFamilyCount: len(m.cfExists),
+	}
+
 	return stats, nil
+}
+
+func (m *mockDB) SearchCF(cf string, opts db.SearchOptions) (*db.SearchResults, error) {
+	if !m.cfExists[cf] {
+		return nil, db.ErrColumnFamilyNotFound
+	}
+
+	results := &db.SearchResults{
+		Results:   make([]db.SearchResult, 0),
+		Limited:   false,
+		QueryTime: "0ms", // Mock timing
+	}
+
+	cfData, ok := m.data[cf]
+	if !ok {
+		return results, nil
+	}
+
+	// Simple substring matching for testing (not implementing full regex/wildcard logic)
+	for key, value := range cfData {
+		var keyMatches, valueMatches bool
+		var matchedFields []string
+
+		if opts.KeyPattern != "" {
+			if opts.CaseSensitive {
+				keyMatches = strings.Contains(key, opts.KeyPattern)
+			} else {
+				keyMatches = strings.Contains(strings.ToLower(key), strings.ToLower(opts.KeyPattern))
+			}
+			if keyMatches {
+				matchedFields = append(matchedFields, "key")
+			}
+		} else {
+			keyMatches = true
+		}
+
+		if opts.ValuePattern != "" {
+			if opts.CaseSensitive {
+				valueMatches = strings.Contains(value, opts.ValuePattern)
+			} else {
+				valueMatches = strings.Contains(strings.ToLower(value), strings.ToLower(opts.ValuePattern))
+			}
+			if valueMatches {
+				matchedFields = append(matchedFields, "value")
+			}
+		} else {
+			valueMatches = true
+		}
+
+		// Both patterns must match if both are specified
+		if opts.KeyPattern != "" && opts.ValuePattern != "" {
+			if keyMatches && valueMatches {
+				result := db.SearchResult{
+					Key:           key,
+					Value:         value,
+					MatchedFields: matchedFields,
+				}
+				results.Results = append(results.Results, result)
+			}
+		} else if keyMatches || valueMatches {
+			result := db.SearchResult{
+				Key:           key,
+				Value:         value,
+				MatchedFields: matchedFields,
+			}
+			results.Results = append(results.Results, result)
+		}
+
+		// Apply limit
+		if opts.Limit > 0 && len(results.Results) >= opts.Limit {
+			results.Limited = true
+			break
+		}
+	}
+
+	return results, nil
 }
 
 // Helper function to capture stdout during test execution

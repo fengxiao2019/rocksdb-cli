@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +61,31 @@ type DatabaseStats struct {
 	LastUpdated       time.Time `json:"last_updated"`
 }
 
+// SearchOptions contains options for fuzzy search operations
+type SearchOptions struct {
+	KeyPattern    string `json:"key_pattern"`    // Pattern to search in keys
+	ValuePattern  string `json:"value_pattern"`  // Pattern to search in values
+	UseRegex      bool   `json:"use_regex"`      // Whether to use regex matching
+	CaseSensitive bool   `json:"case_sensitive"` // Whether search is case sensitive
+	Limit         int    `json:"limit"`          // Maximum number of results
+	KeysOnly      bool   `json:"keys_only"`      // Return only keys, not values
+}
+
+// SearchResult contains a single search result
+type SearchResult struct {
+	Key           string   `json:"key"`
+	Value         string   `json:"value"`
+	MatchedFields []string `json:"matched_fields"` // Which fields matched (key, value, both)
+}
+
+// SearchResults contains search results and metadata
+type SearchResults struct {
+	Results   []SearchResult `json:"results"`
+	Total     int            `json:"total"`
+	Limited   bool           `json:"limited"`    // Whether results were limited
+	QueryTime string         `json:"query_time"` // Time taken for the search
+}
+
 type ScanOptions struct {
 	Limit   int
 	Reverse bool
@@ -74,6 +100,7 @@ type KeyValueDB interface {
 	GetLastCF(cf string) (string, string, error) // Returns key, value, error
 	ExportToCSV(cf, filePath string) error
 	JSONQueryCF(cf, field, value string) (map[string]string, error) // Query by JSON field
+	SearchCF(cf string, opts SearchOptions) (*SearchResults, error) // Fuzzy search in column family
 	ListCFs() ([]string, error)
 	CreateCF(cf string) error
 	DropCF(cf string) error
@@ -654,4 +681,193 @@ func (d *DB) GetDatabaseStats() (*DatabaseStats, error) {
 	}
 
 	return stats, nil
+}
+
+// SearchCF performs fuzzy search in a column family based on provided options
+func (d *DB) SearchCF(cf string, opts SearchOptions) (*SearchResults, error) {
+	startTime := time.Now()
+
+	h, ok := d.cfHandles[cf]
+	if !ok {
+		return nil, ErrColumnFamilyNotFound
+	}
+
+	it := d.db.NewIteratorCF(d.ro, h)
+	defer it.Close()
+
+	results := &SearchResults{
+		Results: make([]SearchResult, 0),
+		Limited: false,
+	}
+
+	// Compile regex patterns if needed
+	var keyRegex, valueRegex *regexp.Regexp
+	var err error
+
+	if opts.UseRegex {
+		if opts.KeyPattern != "" {
+			flags := ""
+			if !opts.CaseSensitive {
+				flags = "(?i)"
+			}
+			keyRegex, err = regexp.Compile(flags + opts.KeyPattern)
+			if err != nil {
+				return nil, fmt.Errorf("invalid key regex pattern: %v", err)
+			}
+		}
+		if opts.ValuePattern != "" {
+			flags := ""
+			if !opts.CaseSensitive {
+				flags = "(?i)"
+			}
+			valueRegex, err = regexp.Compile(flags + opts.ValuePattern)
+			if err != nil {
+				return nil, fmt.Errorf("invalid value regex pattern: %v", err)
+			}
+		}
+	}
+
+	// Iterate through all key-value pairs
+	for it.SeekToFirst(); it.Valid(); it.Next() {
+		// Check limit early to avoid unnecessary processing
+		if opts.Limit > 0 && len(results.Results) >= opts.Limit {
+			results.Limited = true
+			break
+		}
+
+		k := it.Key()
+		v := it.Value()
+		keyStr := string(k.Data())
+		valueStr := string(v.Data())
+
+		var keyMatches, valueMatches bool
+		var matchedFields []string
+
+		// Check key pattern matching
+		if opts.KeyPattern != "" {
+			keyMatches = matchPattern(keyStr, opts.KeyPattern, opts.UseRegex, opts.CaseSensitive, keyRegex)
+			if keyMatches {
+				matchedFields = append(matchedFields, "key")
+			}
+		}
+
+		// Check value pattern matching
+		if opts.ValuePattern != "" {
+			valueMatches = matchPattern(valueStr, opts.ValuePattern, opts.UseRegex, opts.CaseSensitive, valueRegex)
+			if valueMatches {
+				matchedFields = append(matchedFields, "value")
+			}
+		}
+
+		// Determine if this entry should be included in results
+		shouldInclude := false
+		if opts.KeyPattern != "" && opts.ValuePattern != "" {
+			// Both patterns specified - require both to match
+			shouldInclude = keyMatches && valueMatches
+		} else if opts.KeyPattern != "" {
+			// Only key pattern specified
+			shouldInclude = keyMatches
+		} else if opts.ValuePattern != "" {
+			// Only value pattern specified
+			shouldInclude = valueMatches
+		}
+
+		if shouldInclude {
+			result := SearchResult{
+				Key:           keyStr,
+				MatchedFields: matchedFields,
+			}
+
+			// Include value unless KeysOnly is specified
+			if !opts.KeysOnly {
+				result.Value = valueStr
+			}
+
+			results.Results = append(results.Results, result)
+		}
+
+		k.Free()
+		v.Free()
+	}
+
+	results.Total = len(results.Results)
+	results.QueryTime = time.Since(startTime).String()
+
+	return results, nil
+}
+
+// matchPattern checks if text matches the given pattern
+func matchPattern(text, pattern string, useRegex, caseSensitive bool, compiledRegex *regexp.Regexp) bool {
+	if pattern == "" {
+		return true
+	}
+
+	if useRegex {
+		if compiledRegex != nil {
+			return compiledRegex.MatchString(text)
+		}
+		return false
+	}
+
+	// Handle wildcard patterns (* and ?)
+	if strings.Contains(pattern, "*") || strings.Contains(pattern, "?") {
+		return matchWildcard(text, pattern, caseSensitive)
+	}
+
+	// Simple substring matching
+	if caseSensitive {
+		return strings.Contains(text, pattern)
+	}
+	return strings.Contains(strings.ToLower(text), strings.ToLower(pattern))
+}
+
+// matchWildcard performs wildcard pattern matching (* for any sequence, ? for single character)
+func matchWildcard(text, pattern string, caseSensitive bool) bool {
+	if !caseSensitive {
+		text = strings.ToLower(text)
+		pattern = strings.ToLower(pattern)
+	}
+
+	return wildcardMatch(text, pattern, 0, 0)
+}
+
+// wildcardMatch is a recursive function for wildcard pattern matching
+func wildcardMatch(text, pattern string, textIdx, patternIdx int) bool {
+	// Base cases
+	if patternIdx >= len(pattern) {
+		return textIdx >= len(text)
+	}
+	if textIdx >= len(text) {
+		// Check if remaining pattern consists only of '*'
+		for i := patternIdx; i < len(pattern); i++ {
+			if pattern[i] != '*' {
+				return false
+			}
+		}
+		return true
+	}
+
+	currentChar := pattern[patternIdx]
+
+	switch currentChar {
+	case '*':
+		// Try matching zero or more characters
+		// First try matching zero characters (skip the *)
+		if wildcardMatch(text, pattern, textIdx, patternIdx+1) {
+			return true
+		}
+		// Then try matching one character and continue
+		return wildcardMatch(text, pattern, textIdx+1, patternIdx)
+
+	case '?':
+		// Match exactly one character
+		return wildcardMatch(text, pattern, textIdx+1, patternIdx+1)
+
+	default:
+		// Match exact character
+		if text[textIdx] == currentChar {
+			return wildcardMatch(text, pattern, textIdx+1, patternIdx+1)
+		}
+		return false
+	}
 }
