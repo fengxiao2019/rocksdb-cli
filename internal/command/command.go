@@ -1,10 +1,12 @@
 package command
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"rocksdb-cli/internal/db"
 	"rocksdb-cli/internal/jsonutil"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -612,6 +614,41 @@ func (h *Handler) Execute(input string) bool {
 				}
 			}
 		}
+	case "stats":
+		// Parse flags and arguments
+		flags, args := parseFlags(parts[1:])
+		detailed := flags["detailed"] == "true" || flags["d"] == "true"
+		pretty := flags["pretty"] == "true"
+
+		var cf string
+
+		switch len(args) {
+		case 0: // stats (show database stats)
+			stats, err := h.DB.GetDatabaseStats()
+			if err != nil {
+				handleError(err, "Get database statistics")
+			} else {
+				h.formatDatabaseStats(stats, detailed, pretty)
+			}
+		case 1: // stats <cf> (show specific CF stats)
+			cf = args[0]
+			stats, err := h.DB.GetCFStats(cf)
+			if err != nil {
+				handleError(err, "Get column family statistics", cf)
+			} else {
+				h.formatCFStats(stats, detailed, pretty)
+			}
+		default:
+			fmt.Println("Usage: stats [<cf>] [--detailed] [--pretty]")
+			fmt.Println("  Show database or column family statistics")
+			fmt.Println("  Examples:")
+			fmt.Println("    stats                    # Database overview")
+			fmt.Println("    stats users              # Detailed stats for 'users' CF")
+			fmt.Println("    stats --detailed         # Detailed database stats")
+			fmt.Println("    stats users --detailed   # Detailed stats for 'users' CF")
+			fmt.Println("    stats --pretty           # Pretty JSON output")
+			return true
+		}
 	case "help":
 		fmt.Println("Available commands:")
 		fmt.Println("  usecf <cf>                    - Switch current column family")
@@ -624,6 +661,7 @@ func (h *Handler) Execute(input string) bool {
 		fmt.Println("  last [<cf>] [--pretty]        - Get last key-value pair from CF")
 		fmt.Println("  export [<cf>] <file_path>     - Export CF to CSV file")
 		fmt.Println("  jsonquery [<cf>] <field> <value> [--pretty] - Query entries by JSON field value")
+		fmt.Println("  stats [<cf>] [--detailed] [--pretty] - Show database/column family statistics")
 		fmt.Println("  listcf                        - List all column families")
 		fmt.Println("  createcf <cf>                 - Create new column family")
 		fmt.Println("  dropcf <cf>                   - Drop column family")
@@ -643,10 +681,161 @@ func (h *Handler) Execute(input string) bool {
 
 		fmt.Println("  - jsonquery searches for JSON values where field matches value exactly")
 		fmt.Println("    Example: jsonquery name \"Alice\" finds all entries where name field = \"Alice\"")
+		fmt.Println("  - stats command shows key count, data types, size distribution, and common patterns")
 	case "exit", "quit":
 		return false
 	default:
 		fmt.Println("Unknown command. Type 'help' for available commands.")
 	}
 	return true
+}
+
+// formatDatabaseStats formats and displays database-wide statistics
+func (h *Handler) formatDatabaseStats(stats *db.DatabaseStats, detailed, pretty bool) {
+	if pretty {
+		// Output as pretty JSON
+		if data, err := json.MarshalIndent(stats, "", "  "); err == nil {
+			fmt.Println(string(data))
+		} else {
+			fmt.Printf("Error formatting stats: %v\n", err)
+		}
+		return
+	}
+
+	fmt.Println("=== Database Statistics ===")
+	fmt.Printf("Column Families: %d\n", stats.ColumnFamilyCount)
+	fmt.Printf("Total Keys: %s\n", formatNumber(stats.TotalKeyCount))
+	fmt.Printf("Total Size: %s\n", formatBytes(stats.TotalSize))
+	fmt.Printf("Last Updated: %s\n", stats.LastUpdated.Format("2006-01-02 15:04:05"))
+	fmt.Println()
+
+	if detailed {
+		fmt.Println("=== Column Family Details ===")
+		for _, cf := range stats.ColumnFamilies {
+			h.formatCFStats(&cf, false, false)
+			fmt.Println()
+		}
+	} else {
+		fmt.Println("Column Family Summary:")
+		for _, cf := range stats.ColumnFamilies {
+			fmt.Printf("  %-20s %8s keys  %10s\n",
+				cf.Name,
+				formatNumber(cf.KeyCount),
+				formatBytes(cf.TotalKeySize+cf.TotalValueSize))
+		}
+	}
+}
+
+// formatCFStats formats and displays column family statistics
+func (h *Handler) formatCFStats(stats *db.CFStats, detailed, pretty bool) {
+	if pretty {
+		// Output as pretty JSON
+		if data, err := json.MarshalIndent(stats, "", "  "); err == nil {
+			fmt.Println(string(data))
+		} else {
+			fmt.Printf("Error formatting stats: %v\n", err)
+		}
+		return
+	}
+
+	fmt.Printf("=== Column Family: %s ===\n", stats.Name)
+	fmt.Printf("Keys: %s\n", formatNumber(stats.KeyCount))
+	fmt.Printf("Total Key Size: %s\n", formatBytes(stats.TotalKeySize))
+	fmt.Printf("Total Value Size: %s\n", formatBytes(stats.TotalValueSize))
+	fmt.Printf("Average Key Size: %.1f bytes\n", stats.AverageKeySize)
+	fmt.Printf("Average Value Size: %.1f bytes\n", stats.AverageValueSize)
+	fmt.Printf("Last Updated: %s\n", stats.LastUpdated.Format("2006-01-02 15:04:05"))
+
+	if detailed || len(stats.DataTypeDistribution) > 0 {
+		fmt.Println("\nData Type Distribution:")
+		// Sort data types by count (descending)
+		type dataTypeCount struct {
+			dataType db.DataType
+			count    int64
+		}
+		var sortedTypes []dataTypeCount
+		for dt, count := range stats.DataTypeDistribution {
+			sortedTypes = append(sortedTypes, dataTypeCount{dt, count})
+		}
+		sort.Slice(sortedTypes, func(i, j int) bool {
+			return sortedTypes[i].count > sortedTypes[j].count
+		})
+
+		for _, dtc := range sortedTypes {
+			percentage := float64(dtc.count) / float64(stats.KeyCount) * 100
+			fmt.Printf("  %-12s %8s (%5.1f%%)\n",
+				dtc.dataType,
+				formatNumber(dtc.count),
+				percentage)
+		}
+	}
+
+	if detailed {
+		if len(stats.CommonPrefixes) > 0 {
+			fmt.Println("\nCommon Key Prefixes:")
+			// Sort prefixes by count (descending)
+			type prefixCount struct {
+				prefix string
+				count  int64
+			}
+			var sortedPrefixes []prefixCount
+			for prefix, count := range stats.CommonPrefixes {
+				sortedPrefixes = append(sortedPrefixes, prefixCount{prefix, count})
+			}
+			sort.Slice(sortedPrefixes, func(i, j int) bool {
+				return sortedPrefixes[i].count > sortedPrefixes[j].count
+			})
+
+			// Show top 10 prefixes
+			limit := 10
+			if len(sortedPrefixes) < limit {
+				limit = len(sortedPrefixes)
+			}
+			for i := 0; i < limit; i++ {
+				pc := sortedPrefixes[i]
+				percentage := float64(pc.count) / float64(stats.KeyCount) * 100
+				fmt.Printf("  %-15s %8s (%5.1f%%)\n",
+					pc.prefix,
+					formatNumber(pc.count),
+					percentage)
+			}
+		}
+
+		if len(stats.SampleKeys) > 0 {
+			fmt.Println("\nSample Keys:")
+			for i, key := range stats.SampleKeys {
+				if i >= 5 { // Limit to first 5 keys
+					fmt.Printf("  ... and %d more\n", len(stats.SampleKeys)-5)
+					break
+				}
+				fmt.Printf("  %s\n", key)
+			}
+		}
+	}
+}
+
+// formatNumber formats large numbers with K/M/B suffixes
+func formatNumber(n int64) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	} else if n < 1000000 {
+		return fmt.Sprintf("%.1fK", float64(n)/1000)
+	} else if n < 1000000000 {
+		return fmt.Sprintf("%.1fM", float64(n)/1000000)
+	} else {
+		return fmt.Sprintf("%.1fB", float64(n)/1000000000)
+	}
+}
+
+// formatBytes formats byte counts with appropriate units
+func formatBytes(bytes int64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	} else if bytes < 1024*1024 {
+		return fmt.Sprintf("%.1f KB", float64(bytes)/1024)
+	} else if bytes < 1024*1024*1024 {
+		return fmt.Sprintf("%.1f MB", float64(bytes)/(1024*1024))
+	} else {
+		return fmt.Sprintf("%.1f GB", float64(bytes)/(1024*1024*1024))
+	}
 }

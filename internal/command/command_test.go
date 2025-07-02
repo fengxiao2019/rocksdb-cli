@@ -198,6 +198,67 @@ func (m *mockDB) IsReadOnly() bool {
 	return false // Mock DB is always read-write for testing
 }
 
+func (m *mockDB) GetCFStats(cf string) (*db.CFStats, error) {
+	if !m.cfExists[cf] {
+		return nil, db.ErrColumnFamilyNotFound
+	}
+
+	stats := &db.CFStats{
+		Name:                    cf,
+		DataTypeDistribution:    make(map[db.DataType]int64),
+		KeyLengthDistribution:   make(map[string]int64),
+		ValueLengthDistribution: make(map[string]int64),
+		CommonPrefixes:          make(map[string]int64),
+		SampleKeys:              make([]string, 0),
+	}
+
+	cfData := m.data[cf]
+	stats.KeyCount = int64(len(cfData))
+
+	for key, value := range cfData {
+		keyLen := int64(len(key))
+		valueLen := int64(len(value))
+		stats.TotalKeySize += keyLen
+		stats.TotalValueSize += valueLen
+
+		// Simple data type detection for mock
+		if len(value) == 0 {
+			stats.DataTypeDistribution[db.DataTypeEmpty]++
+		} else if value[0] == '{' || value[0] == '[' {
+			stats.DataTypeDistribution[db.DataTypeJSON]++
+		} else {
+			stats.DataTypeDistribution[db.DataTypeString]++
+		}
+
+		stats.SampleKeys = append(stats.SampleKeys, key)
+	}
+
+	if stats.KeyCount > 0 {
+		stats.AverageKeySize = float64(stats.TotalKeySize) / float64(stats.KeyCount)
+		stats.AverageValueSize = float64(stats.TotalValueSize) / float64(stats.KeyCount)
+	}
+
+	return stats, nil
+}
+
+func (m *mockDB) GetDatabaseStats() (*db.DatabaseStats, error) {
+	stats := &db.DatabaseStats{
+		ColumnFamilies:    make([]db.CFStats, 0),
+		ColumnFamilyCount: len(m.cfExists),
+	}
+
+	for cf := range m.cfExists {
+		cfStats, err := m.GetCFStats(cf)
+		if err == nil {
+			stats.ColumnFamilies = append(stats.ColumnFamilies, *cfStats)
+			stats.TotalKeyCount += cfStats.KeyCount
+			stats.TotalSize += cfStats.TotalKeySize + cfStats.TotalValueSize
+		}
+	}
+
+	return stats, nil
+}
+
 func (m *mockDB) JSONQueryCF(cf, field, value string) (map[string]string, error) {
 	if !m.cfExists[cf] {
 		return nil, db.ErrColumnFamilyNotFound
@@ -995,4 +1056,115 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func TestStatsCommand(t *testing.T) {
+	handler, mockDB := newTestHandler("users")
+
+	// Create column families first
+	mockDB.CreateCF("users")
+	mockDB.CreateCF("logs")
+
+	// Set up test data with different data types
+	mockDB.PutCF("users", "user:1", `{"name": "Alice", "age": 30}`)
+	mockDB.PutCF("users", "user:2", `{"name": "Bob", "age": 25}`)
+	mockDB.PutCF("users", "user:3", "plain_string_value")
+	mockDB.PutCF("users", "user:4", "")
+	mockDB.PutCF("logs", "log:1", `{"level": "info", "message": "test"}`)
+
+	tests := []struct {
+		name     string
+		input    string
+		expected []string
+	}{
+		{
+			name:  "Database stats",
+			input: "stats",
+			expected: []string{
+				"Database Statistics",
+				"Column Families: 3", // default + users + logs
+				"Total Keys:",
+				"users",
+				"logs",
+			},
+		},
+		{
+			name:  "Column family stats",
+			input: "stats users",
+			expected: []string{
+				"Column Family: users",
+				"Keys: 4",
+				"Data Type Distribution:",
+				"JSON",
+				"String",
+				"Empty",
+			},
+		},
+		{
+			name:  "Detailed stats",
+			input: "stats users --detailed",
+			expected: []string{
+				"Column Family: users",
+				"Data Type Distribution:",
+				"Sample Keys:",
+				"user:",
+			},
+		},
+		{
+			name:  "Pretty JSON stats",
+			input: "stats users --pretty",
+			expected: []string{
+				`"name": "users"`,
+				`"key_count"`,
+				`"data_type_distribution"`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := captureOutput(func() {
+				handler.Execute(tt.input)
+			})
+
+			for _, expected := range tt.expected {
+				if !strings.Contains(output, expected) {
+					t.Errorf("Expected output to contain '%s', but got: %s", expected, output)
+				}
+			}
+		})
+	}
+}
+
+func TestStatsErrorHandling(t *testing.T) {
+	handler, _ := newTestHandler("users")
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "Non-existent column family",
+			input:    "stats nonexistent",
+			expected: "Column family 'nonexistent' does not exist",
+		},
+		{
+			name:     "Invalid usage",
+			input:    "stats cf1 cf2 extra",
+			expected: "Usage: stats [<cf>] [--detailed] [--pretty]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := captureOutput(func() {
+				handler.Execute(tt.input)
+			})
+
+			if !strings.Contains(output, tt.expected) {
+				t.Errorf("Expected output to contain '%s', but got: %s", tt.expected, output)
+			}
+		})
+	}
 }

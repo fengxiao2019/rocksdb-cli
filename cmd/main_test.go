@@ -210,6 +210,67 @@ func (m *mockDB) JSONQueryCF(cf, field, value string) (map[string]string, error)
 	return make(map[string]string), nil
 }
 
+func (m *mockDB) GetCFStats(cf string) (*db.CFStats, error) {
+	if !m.cfExists[cf] {
+		return nil, db.ErrColumnFamilyNotFound
+	}
+
+	stats := &db.CFStats{
+		Name:                    cf,
+		DataTypeDistribution:    make(map[db.DataType]int64),
+		KeyLengthDistribution:   make(map[string]int64),
+		ValueLengthDistribution: make(map[string]int64),
+		CommonPrefixes:          make(map[string]int64),
+		SampleKeys:              make([]string, 0),
+	}
+
+	cfData := m.data[cf]
+	stats.KeyCount = int64(len(cfData))
+
+	for key, value := range cfData {
+		keyLen := int64(len(key))
+		valueLen := int64(len(value))
+		stats.TotalKeySize += keyLen
+		stats.TotalValueSize += valueLen
+
+		// Simple data type detection for mock
+		if len(value) == 0 {
+			stats.DataTypeDistribution[db.DataTypeEmpty]++
+		} else if value[0] == '{' || value[0] == '[' {
+			stats.DataTypeDistribution[db.DataTypeJSON]++
+		} else {
+			stats.DataTypeDistribution[db.DataTypeString]++
+		}
+
+		stats.SampleKeys = append(stats.SampleKeys, key)
+	}
+
+	if stats.KeyCount > 0 {
+		stats.AverageKeySize = float64(stats.TotalKeySize) / float64(stats.KeyCount)
+		stats.AverageValueSize = float64(stats.TotalValueSize) / float64(stats.KeyCount)
+	}
+
+	return stats, nil
+}
+
+func (m *mockDB) GetDatabaseStats() (*db.DatabaseStats, error) {
+	stats := &db.DatabaseStats{
+		ColumnFamilies:    make([]db.CFStats, 0),
+		ColumnFamilyCount: len(m.cfExists),
+	}
+
+	for cf := range m.cfExists {
+		cfStats, err := m.GetCFStats(cf)
+		if err == nil {
+			stats.ColumnFamilies = append(stats.ColumnFamilies, *cfStats)
+			stats.TotalKeyCount += cfStats.KeyCount
+			stats.TotalSize += cfStats.TotalKeySize + cfStats.TotalValueSize
+		}
+	}
+
+	return stats, nil
+}
+
 // Helper function to capture stdout during test execution
 func captureOutput(fn func()) string {
 	r, w, _ := os.Pipe()

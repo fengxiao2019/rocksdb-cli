@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/linxGnu/grocksdb"
 )
@@ -20,6 +22,43 @@ var (
 	ErrColumnFamilyEmpty    = errors.New("column family is empty")
 	ErrDatabaseClosed       = errors.New("database is closed")
 )
+
+// DataType represents the detected data type of a value
+type DataType string
+
+const (
+	DataTypeJSON      DataType = "JSON"
+	DataTypeNumber    DataType = "Number"
+	DataTypeTimestamp DataType = "Timestamp"
+	DataTypeString    DataType = "String"
+	DataTypeBinary    DataType = "Binary"
+	DataTypeEmpty     DataType = "Empty"
+)
+
+// CFStats contains statistics for a column family
+type CFStats struct {
+	Name                    string             `json:"name"`
+	KeyCount                int64              `json:"key_count"`
+	TotalKeySize            int64              `json:"total_key_size"`
+	TotalValueSize          int64              `json:"total_value_size"`
+	AverageKeySize          float64            `json:"average_key_size"`
+	AverageValueSize        float64            `json:"average_value_size"`
+	DataTypeDistribution    map[DataType]int64 `json:"data_type_distribution"`
+	KeyLengthDistribution   map[string]int64   `json:"key_length_distribution"`
+	ValueLengthDistribution map[string]int64   `json:"value_length_distribution"`
+	CommonPrefixes          map[string]int64   `json:"common_prefixes"`
+	SampleKeys              []string           `json:"sample_keys"`
+	LastUpdated             time.Time          `json:"last_updated"`
+}
+
+// DatabaseStats contains overall database statistics
+type DatabaseStats struct {
+	ColumnFamilies    []CFStats `json:"column_families"`
+	TotalKeyCount     int64     `json:"total_key_count"`
+	TotalSize         int64     `json:"total_size"`
+	ColumnFamilyCount int       `json:"column_family_count"`
+	LastUpdated       time.Time `json:"last_updated"`
+}
 
 type ScanOptions struct {
 	Limit   int
@@ -38,6 +77,8 @@ type KeyValueDB interface {
 	ListCFs() ([]string, error)
 	CreateCF(cf string) error
 	DropCF(cf string) error
+	GetCFStats(cf string) (*CFStats, error)    // Get statistics for a specific column family
+	GetDatabaseStats() (*DatabaseStats, error) // Get overall database statistics
 	IsReadOnly() bool
 	Close()
 }
@@ -435,4 +476,182 @@ func (d *DB) JSONQueryCF(cf, field, value string) (map[string]string, error) {
 
 func (d *DB) IsReadOnly() bool {
 	return d.readOnly
+}
+
+// detectDataType analyzes a value and determines its most likely data type
+func detectDataType(value string) DataType {
+	if len(value) == 0 {
+		return DataTypeEmpty
+	}
+
+	// Check for JSON
+	trimmed := strings.TrimSpace(value)
+	if (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
+		(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]")) {
+		var jsonData interface{}
+		if json.Unmarshal([]byte(value), &jsonData) == nil {
+			return DataTypeJSON
+		}
+	}
+
+	// Check for numbers
+	if _, err := strconv.ParseFloat(value, 64); err == nil {
+		return DataTypeNumber
+	}
+
+	// Check for timestamps (Unix timestamps in various formats)
+	if ts, err := strconv.ParseInt(value, 10, 64); err == nil {
+		// Reasonable timestamp range (covers years 1973-2033 for seconds, and microseconds/nanoseconds)
+		if (ts > 1e8 && ts < 2e9) || (ts > 1e12 && ts < 2e18) {
+			return DataTypeTimestamp
+		}
+	}
+
+	// Check for binary data (contains non-printable characters)
+	for _, b := range []byte(value) {
+		if b < 32 && b != 9 && b != 10 && b != 13 { // Allow tab, newline, carriage return
+			return DataTypeBinary
+		}
+	}
+
+	return DataTypeString
+}
+
+// getKeyPrefix extracts a meaningful prefix from a key for common prefix analysis
+func getKeyPrefix(key string, maxLen int) string {
+	if maxLen <= 0 {
+		maxLen = 10 // Default prefix length
+	}
+
+	// Look for common separators
+	separators := []string{":", "/", "-", "_", "."}
+	for _, sep := range separators {
+		if idx := strings.Index(key, sep); idx > 0 && idx <= maxLen {
+			return key[:idx+1] // Include the separator
+		}
+	}
+
+	// If no separator found, use first maxLen characters
+	if len(key) <= maxLen {
+		return key
+	}
+	return key[:maxLen]
+}
+
+func (d *DB) GetCFStats(cf string) (*CFStats, error) {
+	h, ok := d.cfHandles[cf]
+	if !ok {
+		return nil, ErrColumnFamilyNotFound
+	}
+
+	stats := &CFStats{
+		Name:                    cf,
+		DataTypeDistribution:    make(map[DataType]int64),
+		KeyLengthDistribution:   make(map[string]int64),
+		ValueLengthDistribution: make(map[string]int64),
+		CommonPrefixes:          make(map[string]int64),
+		SampleKeys:              make([]string, 0, 10),
+		LastUpdated:             time.Now(),
+	}
+
+	it := d.db.NewIteratorCF(d.ro, h)
+	defer it.Close()
+
+	sampleCount := 0
+	const maxSamples = 10
+
+	for it.SeekToFirst(); it.Valid(); it.Next() {
+		k := it.Key()
+		v := it.Value()
+
+		keyStr := string(k.Data())
+		valueStr := string(v.Data())
+
+		// Update counters
+		stats.KeyCount++
+		keyLen := int64(len(keyStr))
+		valueLen := int64(len(valueStr))
+		stats.TotalKeySize += keyLen
+		stats.TotalValueSize += valueLen
+
+		// Detect data type
+		dataType := detectDataType(valueStr)
+		stats.DataTypeDistribution[dataType]++
+
+		// Key length distribution (categorized)
+		keyLenCategory := categorizeLength(keyLen)
+		stats.KeyLengthDistribution[keyLenCategory]++
+
+		// Value length distribution (categorized)
+		valueLenCategory := categorizeLength(valueLen)
+		stats.ValueLengthDistribution[valueLenCategory]++
+
+		// Common prefixes analysis
+		prefix := getKeyPrefix(keyStr, 10)
+		stats.CommonPrefixes[prefix]++
+
+		// Collect sample keys
+		if sampleCount < maxSamples {
+			stats.SampleKeys = append(stats.SampleKeys, keyStr)
+			sampleCount++
+		}
+
+		k.Free()
+		v.Free()
+	}
+
+	// Calculate averages
+	if stats.KeyCount > 0 {
+		stats.AverageKeySize = float64(stats.TotalKeySize) / float64(stats.KeyCount)
+		stats.AverageValueSize = float64(stats.TotalValueSize) / float64(stats.KeyCount)
+	}
+
+	return stats, nil
+}
+
+// categorizeLength converts a byte length into a human-readable category
+func categorizeLength(length int64) string {
+	switch {
+	case length == 0:
+		return "empty"
+	case length <= 10:
+		return "tiny (≤10)"
+	case length <= 100:
+		return "small (11-100)"
+	case length <= 1000:
+		return "medium (101-1K)"
+	case length <= 10000:
+		return "large (1K-10K)"
+	case length <= 100000:
+		return "very large (10K-100K)"
+	default:
+		return "huge (>100K)"
+	}
+}
+
+func (d *DB) GetDatabaseStats() (*DatabaseStats, error) {
+	cfs, err := d.ListCFs()
+	if err != nil {
+		return nil, err
+	}
+
+	stats := &DatabaseStats{
+		ColumnFamilies:    make([]CFStats, 0, len(cfs)),
+		ColumnFamilyCount: len(cfs),
+		LastUpdated:       time.Now(),
+	}
+
+	for _, cf := range cfs {
+		cfStats, err := d.GetCFStats(cf)
+		if err != nil {
+			// Continue with other CFs even if one fails
+			continue
+		}
+
+		stats.ColumnFamilies = append(stats.ColumnFamilies, *cfStats)
+		stats.TotalKeyCount += cfStats.KeyCount
+		stats.TotalSize += cfStats.TotalKeySize + cfStats.TotalValueSize
+	}
+
+	return stats, nil
 }
