@@ -2,34 +2,38 @@
 graphchain:
   # LLM 配置
   llm:
-    provider: "ollama"  # ollama, openai, googleai
-    model: "qwen2:7b"   # for ollama: qwen2:7b, llama2, llama3, codellama, etc.
-    api_key: ""         # not needed for ollama
-    base_url: "http://localhost:11434"  # default ollama server
-    timeout: "20s"      # reduced from 30s for faster response
+    provider: "ollama"     # Options: openai, ollama, anthropic
+    model: "llama2"        # Model name
+    api_key: ""            # API key (not needed for Ollama)
+    base_url: "http://localhost:11434"  # Ollama server URL
+    timeout: "30s"         # Timeout for LLM calls
+    max_tokens: 2048       # Maximum tokens in response
+    temperature: 0.7       # Creativity level (0.0-1.0)
     
   # Agent 配置
   agent:
-    max_iterations: 5   # reduced from 10 to prevent long chains
-    tool_timeout: "5s"  # reduced for faster individual tool calls
-    enable_memory: true
-    memory_size: 100
+    enable_memory: true    # 🧠 Enable conversation memory
+    memory_size: 50        # 📝 Maximum conversation turns to remember
+    max_iterations: 3      # Maximum tool usage iterations
+    auto_discovery: true   # Automatically discover database schema
+    tool_timeout: "5s"     # Timeout for individual tool calls
     
   # 安全配置
   security:
-    enable_audit: true
-    read_only_mode: false
-    max_query_complexity: 5  # reduced to prevent overly complex queries
-    allowed_operations:
-      - "get"
-      - "scan" 
-      - "prefix"
-      - "jsonquery"
-      - "search"
-      - "stats"
-      
+    read_only_mode: false  # Restrict to read-only operations
+    allowed_operations:    # List of allowed operations (empty = allow all)
+      - get
+      - scan
+      - prefix
+      - list
+      - last
+      - jsonquery
+      - stats
+    query_complexity_limit: 100   # Maximum query complexity score
+    enable_audit_log: true        # Enable security audit logging
+    
   # 上下文配置
   context:
-    enable_auto_discovery: true
-    update_interval: "5m"
-    max_context_size: 4096 
+    max_context_size: 1000         # Maximum context items to maintain
+    update_frequency: "5m"         # How often to update database context
+    enable_auto_discovery: true   # Enable automatic database schema discovery 

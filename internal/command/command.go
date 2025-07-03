@@ -1,10 +1,12 @@
 package command
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"rocksdb-cli/internal/db"
+	"rocksdb-cli/internal/graphchain"
 	"rocksdb-cli/internal/jsonutil"
 	"sort"
 	"strconv"
@@ -17,8 +19,9 @@ type ReplState struct {
 }
 
 type Handler struct {
-	DB    db.KeyValueDB
-	State interface{} // *ReplState, used to manage the active column family
+	DB              db.KeyValueDB
+	State           interface{}       // *ReplState, used to manage the active column family
+	GraphChainAgent *graphchain.Agent // GraphChain agent for natural language queries
 }
 
 // prettyPrintJSON formats JSON with recursive nested expansion using jsonutil
@@ -1020,4 +1023,152 @@ func (h *Handler) formatSearchResults(results *db.SearchResults, pretty bool) {
 
 	// Show footer with timing
 	fmt.Printf("\nQuery completed in %s\n", results.QueryTime)
+}
+
+// ExecuteGraphChainCommand executes the graphchain agent command
+func (h *Handler) ExecuteGraphChainCommand(input string) bool {
+	trimmed := strings.TrimSpace(input)
+
+	// Handle 'memory' command
+	if trimmed == "memory" {
+		h.showMemoryHelp()
+		return true
+	}
+
+	// Handle memory subcommands
+	if strings.HasPrefix(trimmed, "memory ") {
+		parts := strings.Fields(trimmed)
+		if len(parts) >= 2 {
+			switch parts[1] {
+			case "stats":
+				h.showMemoryStats()
+				return true
+			case "history":
+				n := 5 // default to last 5 turns
+				if len(parts) >= 3 {
+					if parsed, err := strconv.Atoi(parts[2]); err == nil && parsed > 0 {
+						n = parsed
+					}
+				}
+				h.showMemoryHistory(n)
+				return true
+			case "clear":
+				h.clearMemory()
+				return true
+			default:
+				fmt.Println("Unknown memory command. Use 'memory' for help.")
+				return true
+			}
+		}
+	}
+
+	// Handle other graphchain commands here
+	// For now, return false to indicate the command wasn't handled
+	return false
+}
+
+// showMemoryHelp displays help for memory commands
+func (h *Handler) showMemoryHelp() {
+	fmt.Println("\n🧠 Memory Commands:")
+	fmt.Println("  memory           - Show this help")
+	fmt.Println("  memory stats     - Show memory usage statistics")
+	fmt.Println("  memory history [n] - Show last n conversation turns (default: 5)")
+	fmt.Println("  memory clear     - Clear conversation history")
+	fmt.Println()
+}
+
+// showMemoryStats displays memory usage statistics
+func (h *Handler) showMemoryStats() {
+	if h.GraphChainAgent == nil {
+		fmt.Println("❌ GraphChain agent not initialized")
+		return
+	}
+
+	if !h.GraphChainAgent.IsMemoryEnabled() {
+		fmt.Println("🚫 Memory is not enabled. Enable it in the config file.")
+		return
+	}
+
+	stats := h.GraphChainAgent.GetMemoryStats()
+	if stats == nil {
+		fmt.Println("❌ Could not retrieve memory statistics")
+		return
+	}
+
+	fmt.Printf("\n📊 Memory Statistics:\n")
+	fmt.Printf("  Total Conversations: %d\n", stats.TotalTurns)
+	fmt.Printf("  Memory Capacity: %d\n", stats.MaxSize)
+	fmt.Printf("  Memory Usage: %.1f%%\n", stats.MemoryUsage)
+	fmt.Printf("  Total Characters: %d\n", stats.TotalChars)
+
+	if stats.TotalTurns > 0 {
+		fmt.Printf("  Oldest Conversation: %s\n", stats.OldestTime.Format("2006-01-02 15:04:05"))
+		fmt.Printf("  Newest Conversation: %s\n", stats.NewestTime.Format("2006-01-02 15:04:05"))
+	}
+	fmt.Println()
+}
+
+// showMemoryHistory displays recent conversation history
+func (h *Handler) showMemoryHistory(n int) {
+	if h.GraphChainAgent == nil {
+		fmt.Println("❌ GraphChain agent not initialized")
+		return
+	}
+
+	if !h.GraphChainAgent.IsMemoryEnabled() {
+		fmt.Println("🚫 Memory is not enabled. Enable it in the config file.")
+		return
+	}
+
+	history := h.GraphChainAgent.GetConversationHistory(n)
+	if len(history) == 0 {
+		fmt.Println("📝 No conversation history available")
+		return
+	}
+
+	fmt.Printf("\n📚 Last %d Conversation(s):\n", len(history))
+	fmt.Println(strings.Repeat("─", 60))
+
+	for i, turn := range history {
+		fmt.Printf("\n💬 Conversation %d (%s):\n", len(history)-i, turn.Timestamp.Format("15:04:05"))
+
+		if turn.UserQuery != "" {
+			fmt.Printf("🙋 User: %s\n", turn.UserQuery)
+		}
+
+		if turn.AgentResponse != "" {
+			// Truncate long responses for display
+			response := turn.AgentResponse
+			if len(response) > 200 {
+				response = response[:200] + "..."
+			}
+			fmt.Printf("🤖 Agent: %s\n", response)
+		}
+
+		if turn.ExecutionTime > 0 {
+			fmt.Printf("⏱️  Time: %v\n", turn.ExecutionTime)
+		}
+	}
+	fmt.Println()
+}
+
+// clearMemory clears the conversation history
+func (h *Handler) clearMemory() {
+	if h.GraphChainAgent == nil {
+		fmt.Println("❌ GraphChain agent not initialized")
+		return
+	}
+
+	if !h.GraphChainAgent.IsMemoryEnabled() {
+		fmt.Println("🚫 Memory is not enabled. Enable it in the config file.")
+		return
+	}
+
+	err := h.GraphChainAgent.ClearMemory(context.Background())
+	if err != nil {
+		fmt.Printf("❌ Failed to clear memory: %v\n", err)
+		return
+	}
+
+	fmt.Println("✅ Conversation memory cleared successfully")
 }

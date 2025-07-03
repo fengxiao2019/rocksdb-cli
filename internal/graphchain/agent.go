@@ -38,6 +38,7 @@ type Agent struct {
 	executor *agents.Executor
 	tools    []tools.Tool
 	database *db.DB
+	memory   *ConversationMemory
 }
 
 // QueryResult represents the result of a query execution
@@ -65,6 +66,12 @@ func (a *Agent) Initialize(ctx context.Context, config *Config) error {
 	a.llm, err = a.initializeLLM(config)
 	if err != nil {
 		return fmt.Errorf("failed to initialize LLM: %w", err)
+	}
+
+	// Initialize memory if enabled
+	if config.GraphChain.Agent.EnableMemory {
+		a.memory = NewConversationMemory(config.GraphChain.Agent.MemorySize)
+		a.memory.SetReturnMessages(true) // Use chat message format
 	}
 
 	// Create database tools
@@ -106,13 +113,39 @@ func (a *Agent) ProcessQuery(ctx context.Context, query string) (*QueryResult, e
 	timeoutCtx, cancel := context.WithTimeout(ctx, a.config.GraphChain.LLM.Timeout)
 	defer cancel()
 
-	// Enhance query with context
-	enhancedQuery := a.buildEnhancedQuery(query)
-
-	// Execute the query using agent executor directly
+	// Build inputs with memory context if enabled
 	inputs := map[string]any{
-		"input": enhancedQuery,
+		"input": query,
 	}
+
+	// Load memory context if memory is enabled
+	if a.memory != nil {
+		memoryVars, err := a.memory.LoadMemoryVariables(ctx, inputs)
+		if err != nil {
+			return &QueryResult{
+				Success:       false,
+				Error:         fmt.Sprintf("Failed to load memory: %v", err),
+				ExecutionTime: time.Since(startTime),
+			}, nil
+		}
+
+		// Add memory variables to inputs
+		for key, value := range memoryVars {
+			inputs[key] = value
+		}
+
+		// Enhance query with conversation history if available
+		if history, ok := memoryVars["history"].(string); ok && history != "" {
+			enhancedQuery := a.buildQueryWithHistory(query, history)
+			inputs["input"] = enhancedQuery
+		}
+	} else {
+		// Fallback to simple enhanced query
+		enhancedQuery := a.buildEnhancedQuery(query)
+		inputs["input"] = enhancedQuery
+	}
+
+	// Execute the query using agent executor
 	result, err := a.executor.Call(timeoutCtx, inputs)
 	executionTime := time.Since(startTime)
 
@@ -138,12 +171,39 @@ func (a *Agent) ProcessQuery(ctx context.Context, query string) (*QueryResult, e
 		finalResult = output
 	}
 
+	// Save conversation to memory if enabled
+	if a.memory != nil {
+		outputs := map[string]any{
+			"output":         finalResult,
+			"execution_time": executionTime,
+		}
+		if err := a.memory.SaveContext(ctx, inputs, outputs); err != nil {
+			// Log error but don't fail the request
+			fmt.Printf("Warning: Failed to save to memory: %v\n", err)
+		}
+	}
+
 	return &QueryResult{
 		Success:       true,
 		Data:          finalResult,
 		Explanation:   "Query executed successfully using database tools",
 		ExecutionTime: executionTime,
 	}, nil
+}
+
+// buildQueryWithHistory enhances the user query with conversation history
+func (a *Agent) buildQueryWithHistory(query, history string) string {
+	// Include conversation history in the system context
+	systemContext := fmt.Sprintf(`你是一个 RocksDB 数据库助手。请根据用户的问题，使用你可用的工具来回答。
+
+对话历史：
+%s
+
+当前用户问题：%s
+
+请根据对话历史的上下文，使用合适的工具回答当前问题，并提供清晰的解释。如果用户的问题涉及之前讨论的内容，请考虑历史上下文。`, history, query)
+
+	return systemContext
 }
 
 // buildEnhancedQuery enhances the user query with database context
@@ -219,4 +279,39 @@ func (a *Agent) GetLLM() llms.Model {
 // GetTools returns the tools used by the agent
 func (a *Agent) GetTools() []tools.Tool {
 	return a.tools
+}
+
+// GetMemory returns the conversation memory (if enabled)
+func (a *Agent) GetMemory() *ConversationMemory {
+	return a.memory
+}
+
+// ClearMemory clears the conversation history
+func (a *Agent) ClearMemory(ctx context.Context) error {
+	if a.memory == nil {
+		return fmt.Errorf("memory is not enabled")
+	}
+	return a.memory.Clear(ctx)
+}
+
+// GetMemoryStats returns memory usage statistics
+func (a *Agent) GetMemoryStats() *MemoryStats {
+	if a.memory == nil {
+		return nil
+	}
+	stats := a.memory.GetStats()
+	return &stats
+}
+
+// IsMemoryEnabled returns whether memory is enabled for this agent
+func (a *Agent) IsMemoryEnabled() bool {
+	return a.memory != nil
+}
+
+// GetConversationHistory returns the recent conversation history
+func (a *Agent) GetConversationHistory(n int) []ConversationTurn {
+	if a.memory == nil {
+		return []ConversationTurn{}
+	}
+	return a.memory.GetRecentHistory(n)
 }
