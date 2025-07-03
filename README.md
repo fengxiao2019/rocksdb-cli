@@ -1,10 +1,15 @@
 # rocksdb-cli
 
-An interactive RocksDB command-line tool written in Go, with support for multiple column families (CF).
+An interactive RocksDB command-line tool written in Go, with support for multiple column families (CF) and AI-powered natural language queries via GraphChain Agent.
 
 ## Table of Contents
 - [Quick Start](#quick-start)
 - [Features](#features)
+- [GraphChain Agent (AI-Powered)](#graphchain-agent-ai-powered)
+  - [Quick Start with GraphChain](#quick-start-with-graphchain)
+  - [Configuration](#configuration)
+  - [Natural Language Examples](#natural-language-examples)
+  - [Supported LLM Providers](#supported-llm-providers)
 - [Installation and Build Process](#installation-and-build-process)
 - [Usage](#usage)
   - [Command Line Help](#command-line-help)
@@ -15,12 +20,16 @@ An interactive RocksDB command-line tool written in Go, with support for multipl
 - [Interactive Commands](#interactive-commands)
 - [JSON Features](#json-pretty-print)
 - [Generate Test Database](#generate-test-database)
+- [MCP Server Support](#mcp-server-support)
 
 ## Quick Start
 
 ```bash
 # Interactive mode
 rocksdb-cli --db /path/to/database
+
+# AI-powered mode (GraphChain Agent)
+rocksdb-cli --db /path/to/database --graphchain
 
 # Find keys by prefix
 rocksdb-cli --db /path/to/database --prefix users --prefix-key "user:"
@@ -33,6 +42,7 @@ rocksdb-cli --db /path/to/database --last users --pretty
 ```
 
 ## Features
+- **🤖 GraphChain Agent** - AI-powered natural language queries using LLMs (OpenAI, Ollama, Google AI)
 - **Interactive command-line (REPL)** - Full-featured REPL with command history
 - **Query by key** with JSON pretty print support
 - **Prefix scanning** - Find keys starting with specific patterns (both interactive and command-line)
@@ -44,24 +54,219 @@ rocksdb-cli --db /path/to/database --last users --pretty
 - **Real-time monitoring** - Watch mode for live data changes
 - **Docker support** - Easy deployment with pre-built Docker images
 - **Read-only mode** - Safe concurrent access for production environments
+- **MCP Server** - Model Context Protocol server for AI integration
+
+## GraphChain Agent (AI-Powered)
+
+GraphChain Agent transforms your RocksDB interactions using natural language processing. Instead of remembering specific commands, simply ask questions in plain English!
+
+### Quick Start with GraphChain
+
+```bash
+# Start GraphChain Agent
+rocksdb-cli --db /path/to/database --graphchain
+
+# With custom configuration
+rocksdb-cli --db /path/to/database --graphchain --config custom-graphchain.yaml
+
+# Docker mode
+docker run -it --rm -v "/path/to/db:/data" -v "$PWD/config:/config" \
+  rocksdb-cli --db /data --graphchain --config /config/graphchain.yaml
+```
+
+### Configuration
+
+Create a configuration file (default: `config/graphchain.yaml`):
+
+```yaml
+graphchain:
+  llm:
+    provider: "ollama"              # openai, googleai, ollama
+    model: "llama2"                 # Model name
+    api_key: "${OPENAI_API_KEY}"    # API key (not needed for Ollama)
+    base_url: "http://localhost:11434"  # Ollama URL
+    timeout: "30s"                  # Request timeout
+  
+  agent:
+    max_iterations: 10              # Max tool iterations
+    tool_timeout: "10s"             # Tool execution timeout
+    enable_memory: true             # Enable conversation memory
+    memory_size: 100                # Max conversation history
+  
+  security:
+    enable_audit: true              # Enable audit logging
+    read_only_mode: false           # Restrict to read operations
+    max_query_complexity: 10        # Max query complexity
+    allowed_operations: ["get", "scan", "prefix", "jsonquery", "search", "stats"]
+  
+  context:
+    enable_auto_discovery: true     # Auto-discover database structure
+    update_interval: "5m"           # Context refresh interval
+    max_context_size: 4096          # Max context tokens
+```
+
+### Natural Language Examples
+
+Once in GraphChain mode, you can ask natural questions:
+
+#### Database Exploration
+```
+🤖 GraphChain Agent > Show me all column families in the database
+🤖 GraphChain Agent > What's in the users column family?
+🤖 GraphChain Agent > How many keys are in the logs table?
+🤖 GraphChain Agent > Give me some statistics about the database
+```
+
+#### Data Queries
+```
+🤖 GraphChain Agent > Find all users named Alice
+🤖 GraphChain Agent > Show me the last 5 entries in the logs column family
+🤖 GraphChain Agent > Get all keys that start with "user:" in the users table
+🤖 GraphChain Agent > Find JSON records where age is greater than 30
+🤖 GraphChain Agent > Search for entries containing "error" in the value
+```
+
+#### Complex Operations
+```
+🤖 GraphChain Agent > Export the users column family to a CSV file
+🤖 GraphChain Agent > Show me all product records where category is "electronics"
+🤖 GraphChain Agent > Find the most recent log entry with level "ERROR"
+🤖 GraphChain Agent > Compare the size of different column families
+```
+
+#### Data Analysis
+```
+🤖 GraphChain Agent > What types of data are stored in the database?
+🤖 GraphChain Agent > Show me the key patterns used in the users table
+🤖 GraphChain Agent > How is the data distributed across column families?
+🤖 GraphChain Agent > Find unusual or interesting patterns in the data
+```
+
+### Supported LLM Providers
+
+#### 1. Ollama (Local, Recommended)
+```bash
+# Install Ollama
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Start Ollama service
+ollama serve
+
+# Pull a model
+ollama pull llama2        # Or llama3, codellama, mistral, etc.
+```
+
+**Configuration:**
+```yaml
+graphchain:
+  llm:
+    provider: "ollama"
+    model: "llama2"
+    base_url: "http://localhost:11434"
+```
+
+#### 2. OpenAI
+```bash
+export OPENAI_API_KEY="your-api-key-here"
+```
+
+**Configuration:**
+```yaml
+graphchain:
+  llm:
+    provider: "openai"
+    model: "gpt-4"
+    api_key: "${OPENAI_API_KEY}"
+```
+
+#### 3. Google AI (Gemini)
+```bash
+export GOOGLE_AI_API_KEY="your-api-key-here"
+```
+
+**Configuration:**
+```yaml
+graphchain:
+  llm:
+    provider: "googleai"
+    model: "gemini-pro"
+    api_key: "${GOOGLE_AI_API_KEY}"
+```
+
+### GraphChain Agent Features
+
+- **🧠 Intelligent Query Planning**: Automatically selects the right tools for your questions
+- **🔍 Context Awareness**: Understands database structure and content patterns
+- **💬 Natural Conversation**: Ask follow-up questions and maintain context
+- **🛡️ Security & Auditing**: Configurable permissions and audit logging
+- **⚡ Performance Optimized**: Efficient tool selection and execution
+- **🔧 Extensible**: Easy to add new tools and capabilities
+
+### Troubleshooting GraphChain
+
+**Common Issues:**
+
+1. **Ollama Connection Failed**
+   ```bash
+   # Check if Ollama is running
+   curl http://localhost:11434/api/tags
+   
+   # Start Ollama if not running
+   ollama serve
+   ```
+
+2. **Model Not Found**
+   ```bash
+   # List available models
+   ollama list
+   
+   # Pull required model
+   ollama pull llama2
+   ```
+
+3. **API Key Issues (OpenAI/Google)**
+   ```bash
+   # Verify environment variable
+   echo $OPENAI_API_KEY
+   
+   # Or set in config file
+   api_key: "your-actual-key-here"
+   ```
+
+4. **Permission Errors**
+   - Check `read_only_mode` setting in config
+   - Verify `allowed_operations` includes needed operations
 
 ## Project Structure
 ```
 rocksdb-cli/
-├── cmd/                # Main program entry
-│   └── main.go
+├── cmd/                    # Main program entry
+│   ├── main.go
+│   └── mcp-server/        # MCP server implementation
+│       └── main.go
 ├── internal/
-│   ├── db/            # RocksDB wrapper
+│   ├── db/                # RocksDB wrapper
 │   │   └── db.go
-│   ├── repl/          # Interactive command-line
+│   ├── repl/              # Interactive command-line
 │   │   └── repl.go
-│   └── command/       # Command handling
-│       └── command.go
-├── scripts/           # Helper scripts
-│   └── gen_testdb.go  # Generate test rocksdb database
-├── Dockerfile         # Docker build configuration
-├── build_docker.sh    # Docker build script
-├── go.mod
+│   ├── command/           # Command handling
+│   │   └── command.go
+│   ├── graphchain/        # GraphChain Agent implementation
+│   │   ├── agent.go       # Core agent logic
+│   │   ├── config.go      # Configuration management
+│   │   ├── tools.go       # Database tools for LLM
+│   │   ├── context.go     # Database context management
+│   │   └── audit.go       # Audit and security
+│   └── mcp/               # MCP server components
+│       ├── tools.go
+│       ├── resources.go
+│       └── transport.go
+├── config/                # Configuration files
+│   ├── graphchain.yaml    # GraphChain config
+│   └── mcp-server.yaml    # MCP server config
+├── scripts/               # Helper scripts
+│   └── gen_testdb.go      # Generate test database
+├── Dockerfile             # Docker configuration
 └── README.md
 ```
 
@@ -437,6 +642,59 @@ rocksdb-cli --db ./testdb
 > jsonquery level ERROR     # Find error logs by JSON field
 > watch logs --interval 1s  # Watch for new log entries
 ```
+
+## MCP Server Support
+
+RocksDB CLI includes a Model Context Protocol (MCP) server that enables integration with AI assistants like Claude Desktop, allowing AI tools to interact with your RocksDB databases through natural language.
+
+### Quick Start with MCP Server
+
+```bash
+# Start MCP server (read-only mode, recommended)
+./cmd/mcp-server/rocksdb-mcp-server --db /path/to/database --readonly
+
+# With configuration file
+./cmd/mcp-server/rocksdb-mcp-server --config config/mcp-server.yaml
+```
+
+### Claude Desktop Integration
+
+Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "rocksdb": {
+      "command": "/path/to/rocksdb-mcp-server",
+      "args": ["--db", "/path/to/database", "--readonly"]
+    }
+  }
+}
+```
+
+Then interact with your database using natural language:
+- "Show me all users in the database"
+- "Export the products table to CSV"
+- "Find all logs with error level"
+
+### Available MCP Tools
+
+The MCP server provides these tools for AI assistants:
+- **Database Operations**: Get, scan, prefix search
+- **Column Family Management**: List, create, drop CFs
+- **Data Export**: CSV export functionality
+- **JSON Queries**: Search by JSON field values
+
+### MCP vs GraphChain Agent
+
+| Feature | MCP Server | GraphChain Agent |
+|---------|------------|------------------|
+| **Integration** | External AI (Claude Desktop) | Built-in AI agent |
+| **Protocol** | Standard MCP protocol | Direct LLM integration |
+| **Setup** | Requires Claude Desktop | Self-contained |
+| **Security** | Tool-level permissions | Full security controls |
+
+> 📖 **For comprehensive MCP documentation**, including detailed configuration, API reference, security considerations, and troubleshooting, see **[docs/MCP_SERVER_README.md](docs/MCP_SERVER_README.md)**.
 
 ## Docker Technical Details
 

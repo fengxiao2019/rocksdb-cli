@@ -781,6 +781,16 @@ func (h *Handler) Execute(input string) bool {
 		fmt.Println("  help                          - Show this help message")
 		fmt.Println("  exit/quit                     - Exit the CLI")
 		fmt.Println("")
+		fmt.Println("🤖 AI-Powered Features:")
+		fmt.Println("  For natural language queries, restart with:")
+		fmt.Println("  rocksdb-cli --db <path> --graphchain")
+		fmt.Println("  Examples: 'Show me all users', 'Find products with category electronics'")
+		fmt.Println("")
+		fmt.Println("🔧 MCP Server Integration:")
+		fmt.Println("  Start MCP server for Claude Desktop integration:")
+		fmt.Println("  ./cmd/mcp-server/rocksdb-mcp-server --db <path>")
+		fmt.Println("  Configure in Claude Desktop's claude_desktop_config.json")
+		fmt.Println("")
 		fmt.Println("Notes:")
 		fmt.Println("  - Commands without [<cf>] use current column family")
 
@@ -795,6 +805,15 @@ func (h *Handler) Execute(input string) bool {
 		fmt.Println("  - jsonquery searches for JSON values where field matches value exactly")
 		fmt.Println("    Example: jsonquery name \"Alice\" finds all entries where name field = \"Alice\"")
 		fmt.Println("  - stats command shows key count, data types, size distribution, and common patterns")
+		fmt.Println("  - search command supports wildcard (*,?) and regex patterns with --regex flag")
+		fmt.Println("")
+		fmt.Println("Advanced Features:")
+		fmt.Println("  📊 Real-time monitoring: rocksdb-cli --db <path> --watch <cf>")
+		fmt.Println("  📄 CSV export: rocksdb-cli --db <path> --export-cf <cf> --export-file file.csv")
+		fmt.Println("  🔍 Complex search: search --key=user:* --value=admin --regex --limit=10")
+		fmt.Println("  🎯 Range scanning: scan users user:1000 user:2000 --limit=50 --reverse")
+		fmt.Println("")
+		fmt.Println("For comprehensive documentation visit: https://github.com/rocksdb-cli")
 	case "exit", "quit":
 		return false
 	default:
