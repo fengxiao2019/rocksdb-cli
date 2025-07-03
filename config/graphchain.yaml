@@ -1,0 +1,35 @@
+# GraphChain Agent Configuration
+graphchain:
+  # LLM 配置
+  llm:
+    provider: "ollama"  # ollama, openai, googleai
+    model: "qwen2:7b"   # for ollama: qwen2:7b, llama2, llama3, codellama, etc.
+    api_key: ""         # not needed for ollama
+    base_url: "http://localhost:11434"  # default ollama server
+    timeout: "20s"      # reduced from 30s for faster response
+    
+  # Agent 配置
+  agent:
+    max_iterations: 5   # reduced from 10 to prevent long chains
+    tool_timeout: "5s"  # reduced for faster individual tool calls
+    enable_memory: true
+    memory_size: 100
+    
+  # 安全配置
+  security:
+    enable_audit: true
+    read_only_mode: false
+    max_query_complexity: 5  # reduced to prevent overly complex queries
+    allowed_operations:
+      - "get"
+      - "scan" 
+      - "prefix"
+      - "jsonquery"
+      - "search"
+      - "stats"
+      
+  # 上下文配置
+  context:
+    enable_auto_discovery: true
+    update_interval: "5m"
+    max_context_size: 4096 

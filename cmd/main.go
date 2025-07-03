@@ -1,16 +1,21 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"rocksdb-cli/internal/db"
+	"rocksdb-cli/internal/graphchain"
 	"rocksdb-cli/internal/jsonutil"
 	"rocksdb-cli/internal/repl"
 	"sort"
+	"strings"
 	"syscall"
 	"time"
+
+	prompt "github.com/c-bata/go-prompt"
 )
 
 const helpText = `rocksdb-cli - Interactive RocksDB command-line tool with column family support
@@ -24,10 +29,13 @@ DESCRIPTION:
     - Direct command-line operations for scripting
     - Data export capabilities
     - Real-time monitoring with watch mode
+    - GraphChain Agent for natural language queries (AI-powered)
 
 OPTIONS:
     --db <path>                  Path to RocksDB database (required)
     --read-only                  Open database in read-only mode (safe for concurrent access)
+    --graphchain                 Enable GraphChain Agent mode for natural language queries
+    --config <path>              Path to GraphChain configuration file (default: config/graphchain.yaml)
     --help                       Show this help message
 
 DATA QUERY OPTIONS:
@@ -60,6 +68,10 @@ EXAMPLES:
     rocksdb-cli --db /path/to/db
     rocksdb-cli --db /path/to/db --read-only  # Safe for concurrent access
 
+    # GraphChain Agent mode (AI-powered natural language queries)
+    rocksdb-cli --db /path/to/db --graphchain
+    rocksdb-cli --db /path/to/db --graphchain --config custom-config.yaml
+
     # Basic data queries
     rocksdb-cli --db /path/to/db --last users
     rocksdb-cli --db /path/to/db --last users --pretty
@@ -85,6 +97,14 @@ EXAMPLES:
     # Utility operations
     rocksdb-cli --db /path/to/db --export-cf users --export-file users.csv
     rocksdb-cli --db /path/to/db --watch logs --interval 500ms
+
+GRAPHCHAIN AGENT EXAMPLES:
+    In GraphChain mode, you can ask natural language questions like:
+    - "Show me all users in the database"
+    - "Find keys that start with 'user:' and contain 'admin' in the value"
+    - "What's the last entry in the logs column family?"
+    - "Get statistics about the database"
+    - "Search for JSON records where age is greater than 30"
 
 INTERACTIVE COMMANDS:
     Once in interactive mode, you can use these commands:
@@ -312,6 +332,8 @@ func main() {
 	searchKeysOnly := flag.Bool("search-keys-only", false, "Show only keys, not values (use with --search)")
 	helpFlag := flag.Bool("help", false, "Show help message")
 	readOnlyFlag := flag.Bool("read-only", false, "Open database in read-only mode (safe for concurrent access)")
+	graphchainFlag := flag.Bool("graphchain", false, "Enable GraphChain Agent mode for natural language queries")
+	configPath := flag.String("config", "config/graphchain.yaml", "Path to GraphChain configuration file")
 	flag.Parse()
 
 	// Show help if requested
@@ -488,6 +510,135 @@ func main() {
 		}
 	}
 
+	// Handle GraphChain Agent mode
+	if *graphchainFlag {
+		runGraphChainAgent(rdb, *configPath)
+		return
+	}
+
 	// Start interactive REPL if no special parameters
 	repl.Start(rdb)
+}
+
+// runGraphChainAgent starts the GraphChain Agent in interactive mode
+func runGraphChainAgent(database db.KeyValueDB, configPath string) {
+	fmt.Println("🤖 Starting GraphChain Agent - AI-powered RocksDB assistant")
+	fmt.Println("Type 'exit' or 'quit' to exit, or ask me questions about your database!")
+	fmt.Println("Examples:")
+	fmt.Println("  - Show me all users in the database")
+	fmt.Println("  - What's the last entry in the logs column family?")
+	fmt.Println("  - Find keys that start with 'user:' and contain 'admin'")
+	fmt.Println()
+
+	// Load configuration
+	config, err := graphchain.LoadConfig(configPath)
+	if err != nil {
+		fmt.Printf("Warning: Failed to load config from %s, using defaults: %v\n", configPath, err)
+		config = graphchain.DefaultConfig()
+	}
+
+	// Cast to *db.DB (required for GraphChain Agent)
+	dbPtr, ok := database.(*db.DB)
+	if !ok {
+		fmt.Printf("Error: GraphChain Agent requires a writable database connection\n")
+		os.Exit(1)
+	}
+
+	// Create and initialize agent
+	agent := graphchain.NewAgent(dbPtr)
+	ctx := context.Background()
+
+	err = agent.Initialize(ctx, config)
+	if err != nil {
+		fmt.Printf("Failed to initialize GraphChain Agent: %v\n", err)
+		fmt.Println("\nTroubleshooting:")
+		fmt.Println("1. Make sure Ollama is running: ollama serve")
+		fmt.Println("2. Check if your model is available: ollama list")
+		fmt.Printf("3. Update config file (%s) with correct model name\n", configPath)
+		os.Exit(1)
+	}
+	defer agent.Close()
+
+	fmt.Printf("✅ GraphChain Agent initialized successfully with %s (%s)\n", config.GraphChain.LLM.Provider, config.GraphChain.LLM.Model)
+	fmt.Printf("Available tools: %v\n", agent.GetCapabilities())
+	fmt.Println()
+
+	// Interactive query loop using go-prompt for better UX
+	fmt.Println("Press Ctrl+C to exit or type 'exit'/'quit'")
+
+	p := prompt.New(
+		func(input string) {
+			input = strings.TrimSpace(input)
+
+			// Check for exit commands
+			if input == "exit" || input == "quit" {
+				fmt.Println("Goodbye!")
+				os.Exit(0)
+			}
+
+			if input == "" {
+				return
+			}
+
+			// Process the query
+			fmt.Printf("🔍 Processing: %s\n", input)
+			fmt.Printf("⏳ Please wait (this may take up to 20 seconds)...\n")
+
+			// Create a context with timeout
+			queryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			defer cancel()
+
+			result, err := agent.ProcessQuery(queryCtx, input)
+			if err != nil {
+				fmt.Printf("❌ Error: %v\n", err)
+			} else if result.Success {
+				fmt.Printf("✅ Result:\n%v\n", result.Data)
+				if result.Explanation != "" {
+					fmt.Printf("💡 Explanation: %s\n", result.Explanation)
+				}
+				fmt.Printf("⏱️  Execution time: %v\n", result.ExecutionTime)
+			} else {
+				fmt.Printf("❌ Failed: %s\n", result.Error)
+			}
+			fmt.Println()
+		},
+		graphchainCompleter,
+		prompt.OptionPrefix("graphchain> "),
+		prompt.OptionTitle("GraphChain Agent"),
+		prompt.OptionHistory([]string{}),
+		prompt.OptionLivePrefix(func() (string, bool) {
+			return "graphchain> ", true
+		}),
+	)
+
+	// Handle Ctrl+C gracefully
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		fmt.Println("\nGoodbye!")
+		os.Exit(0)
+	}()
+
+	p.Run()
+}
+
+// graphchainCompleter provides auto-completion suggestions for GraphChain Agent
+func graphchainCompleter(d prompt.Document) []prompt.Suggest {
+	s := []prompt.Suggest{
+		{Text: "列出所有列族", Description: "List all column families"},
+		{Text: "显示数据库统计信息", Description: "Show database statistics"},
+		{Text: "查找以user开头的键", Description: "Find keys starting with 'user'"},
+		{Text: "获取最后一条记录", Description: "Get the last record"},
+		{Text: "搜索JSON数据", Description: "Search JSON data"},
+		{Text: "show me all data", Description: "Show all data in database"},
+		{Text: "list column families", Description: "List all column families"},
+		{Text: "get database stats", Description: "Get database statistics"},
+		{Text: "find keys starting with", Description: "Find keys with prefix"},
+		{Text: "get last entry", Description: "Get last entry"},
+		{Text: "search json values", Description: "Search JSON values"},
+		{Text: "exit", Description: "Exit GraphChain Agent"},
+		{Text: "quit", Description: "Exit GraphChain Agent"},
+	}
+	return prompt.FilterHasPrefix(s, d.GetWordBeforeCursor(), true)
 }
