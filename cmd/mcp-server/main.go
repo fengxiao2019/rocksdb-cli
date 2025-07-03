@@ -121,6 +121,10 @@ func main() {
 	// Handle shutdown signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	defer func() {
+		signal.Stop(sigChan)
+		close(sigChan)
+	}()
 
 	go func() {
 		<-sigChan

@@ -31,7 +31,7 @@ func Start(rdb db.KeyValueDB) {
 				if isWSL() {
 					fixWSLTerminal()
 				}
-				// Exit REPL
+				// Exit REPL using panic - this is caught by the defer below
 				panic("exit")
 			}
 		},
@@ -45,7 +45,11 @@ func Start(rdb db.KeyValueDB) {
 		}),
 	)
 	defer func() {
-		if r := recover(); r != nil && r != "exit" {
+		if r := recover(); r != nil && r == "exit" {
+			// Clean exit - don't re-panic
+			return
+		} else if r != nil {
+			// Re-panic for other panics
 			panic(r)
 		}
 	}()

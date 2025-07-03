@@ -446,6 +446,10 @@ func main() {
 		// Set up signal handling for graceful shutdown
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+		defer func() {
+			signal.Stop(c)
+			close(c)
+		}()
 
 		var lastKey, lastValue string
 
@@ -614,6 +618,11 @@ func runGraphChainAgent(database db.KeyValueDB, configPath string) {
 	// Handle Ctrl+C gracefully
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	defer func() {
+		signal.Stop(c)
+		close(c)
+	}()
+
 	go func() {
 		<-c
 		fmt.Println("\nGoodbye!")
