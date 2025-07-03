@@ -448,7 +448,8 @@ func main() {
 		signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 		defer func() {
 			signal.Stop(c)
-			close(c)
+			// Don't close the channel directly, let it be garbage collected
+			// This prevents "close of closed channel" panic on Windows
 		}()
 
 		var lastKey, lastValue string
@@ -620,7 +621,8 @@ func runGraphChainAgent(database db.KeyValueDB, configPath string) {
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	defer func() {
 		signal.Stop(c)
-		close(c)
+		// Don't close the channel directly, let it be garbage collected
+		// This prevents "close of closed channel" panic on Windows
 	}()
 
 	go func() {

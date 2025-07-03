@@ -1,3 +1,10 @@
+// Package repl provides an interactive REPL (Read-Eval-Print Loop) for RocksDB CLI.
+//
+// This package handles Windows-specific issues related to signal handling and channel closures.
+// On Windows, the go-prompt library and multiple signal handlers can cause race conditions
+// leading to "close of closed channel" panics. The exit handling has been made thread-safe
+// and uses os.Exit() instead of panic() to avoid conflicts with go-prompt's internal
+// signal handling.
 package repl
 
 import (
@@ -6,8 +13,16 @@ import (
 	"os/exec"
 	"rocksdb-cli/internal/command"
 	"rocksdb-cli/internal/db"
+	"runtime"
+	"sync"
 
 	prompt "github.com/c-bata/go-prompt"
+)
+
+var (
+	// Global flag to track if we're in the exit process
+	exiting   = false
+	exitMutex sync.Mutex
 )
 
 func Start(rdb db.KeyValueDB) {
@@ -26,13 +41,22 @@ func Start(rdb db.KeyValueDB) {
 	p := prompt.New(
 		func(in string) {
 			if !handler.Execute(in) {
+				// Use thread-safe exit handling
+				exitMutex.Lock()
+				if exiting {
+					exitMutex.Unlock()
+					return
+				}
+				exiting = true
+				exitMutex.Unlock()
+
 				fmt.Println("Bye.")
 				// Only fix terminal on WSL
 				if isWSL() {
 					fixWSLTerminal()
 				}
-				// Exit REPL using panic - this is caught by the defer below
-				panic("exit")
+				// Use os.Exit instead of panic to avoid go-prompt's signal handler conflicts
+				os.Exit(0)
 			}
 		},
 		completer,
@@ -44,21 +68,31 @@ func Start(rdb db.KeyValueDB) {
 			return fmt.Sprintf("rocksdb%s[%s]> ", readOnlyFlag, state.CurrentCF), true
 		}),
 	)
+
+	// Set up safer panic recovery that doesn't interfere with signal handlers
 	defer func() {
-		if r := recover(); r != nil && r == "exit" {
-			// Clean exit - don't re-panic
-			return
-		} else if r != nil {
+		if r := recover(); r != nil {
+			// Only handle our own panics, let others propagate
+			if r == "exit" {
+				// Clean exit - already handled above
+				return
+			}
 			// Re-panic for other panics
 			panic(r)
 		}
 	}()
+
 	p.Run()
 }
 
 // isWSL checks if we're running in Windows Subsystem for Linux
 func isWSL() bool {
 	return os.Getenv("WSL_DISTRO_NAME") != "" || os.Getenv("WSLENV") != ""
+}
+
+// isWindows checks if we're running on Windows
+func isWindows() bool {
+	return runtime.GOOS == "windows"
 }
 
 // fixWSLTerminal restores terminal input visibility for WSL
