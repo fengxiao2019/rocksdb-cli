@@ -635,3 +635,19 @@ func TestIsJSONString(t *testing.T) {
 		}
 	}
 }
+
+func (m *MockKeyValueDB) ScanCFPage(cf string, start, end []byte, opts db.ScanOptions) (db.ScanPageResult, error) {
+	result, err := m.ScanCF(cf, start, end, opts)
+	if err != nil {
+		return db.ScanPageResult{}, err
+	}
+	return db.ScanPageResult{Results: result, NextCursor: "", HasMore: false}, nil
+}
+
+func (m *MockKeyValueDB) SmartScanCFPage(cf string, start, end string, opts db.ScanOptions) (db.ScanPageResult, error) {
+	result, err := m.SmartScanCF(cf, start, end, opts)
+	if err != nil {
+		return db.ScanPageResult{}, err
+	}
+	return db.ScanPageResult{Results: result, NextCursor: "", HasMore: false}, nil
+}

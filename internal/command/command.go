@@ -260,12 +260,23 @@ func (h *Handler) Execute(input string) bool {
 			Values: true, // Default to showing values
 		}
 
+		userSetLimit := false
 		if limit, ok := flags["limit"]; ok {
 			if n, err := strconv.Atoi(limit); err == nil && n > 0 {
 				opts.Limit = n
+				userSetLimit = true
+			} else if n == 0 {
+				opts.Limit = 0 // explicit unlimited
+				userSetLimit = true
 			} else {
 				fmt.Println("Invalid limit value")
 				return true
+			}
+		}
+
+		if !userSetLimit {
+			if _, hasAfter := flags["after"]; hasAfter || !hasAfter {
+				opts.Limit = 100
 			}
 		}
 

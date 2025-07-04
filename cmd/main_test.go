@@ -652,3 +652,19 @@ func (m *mockDB) GetKeyFormatInfo(cf string) (util.KeyFormat, string) {
 	// For testing, just return string format
 	return util.KeyFormatString, "Printable string keys"
 }
+
+func (m *mockDB) ScanCFPage(cf string, start, end []byte, opts db.ScanOptions) (db.ScanPageResult, error) {
+	result, err := m.ScanCF(cf, start, end, opts)
+	if err != nil {
+		return db.ScanPageResult{}, err
+	}
+	return db.ScanPageResult{Results: result, NextCursor: "", HasMore: false}, nil
+}
+
+func (m *mockDB) SmartScanCFPage(cf string, start, end string, opts db.ScanOptions) (db.ScanPageResult, error) {
+	result, err := m.SmartScanCF(cf, start, end, opts)
+	if err != nil {
+		return db.ScanPageResult{}, err
+	}
+	return db.ScanPageResult{Results: result, NextCursor: "", HasMore: false}, nil
+}

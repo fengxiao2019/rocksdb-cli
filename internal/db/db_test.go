@@ -1,6 +1,7 @@
 package db
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 )
@@ -325,6 +326,94 @@ func TestDB_Scan(t *testing.T) {
 				tt.validate(t, result)
 			}
 		})
+	}
+}
+
+// TestDB_ScanPaginated tests cursor-based pagination for ScanCF
+func TestDB_ScanPaginated(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "testdb")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer db.Close()
+
+	// Insert 10 keys: key01 ... key10
+	total := 10
+	for i := 1; i <= total; i++ {
+		k := fmt.Sprintf("key%02d", i)
+		v := fmt.Sprintf("value%02d", i)
+		if err := db.PutCF("default", k, v); err != nil {
+			t.Fatalf("PutCF failed: %v", err)
+		}
+	}
+
+	scanPage := func(startAfter string, limit int) (ScanPageResult, error) {
+		return db.ScanCFPage("default", nil, nil, ScanOptions{Values: true, Limit: limit, StartAfter: startAfter})
+	}
+
+	// First page
+	page1, err := scanPage("", 3)
+	if err != nil {
+		t.Fatalf("scanPage failed: %v", err)
+	}
+	if len(page1.Results) != 3 {
+		t.Errorf("First page result count = %d, want 3", len(page1.Results))
+	}
+	if !page1.HasMore {
+		t.Errorf("First page should have more")
+	}
+	if page1.NextCursor == "" {
+		t.Errorf("First page should have next cursor")
+	}
+
+	// Middle page
+	page2, err := scanPage(page1.NextCursor, 3)
+	if err != nil {
+		t.Fatalf("scanPage failed: %v", err)
+	}
+	if len(page2.Results) != 3 {
+		t.Errorf("Second page result count = %d, want 3", len(page2.Results))
+	}
+	if !page2.HasMore {
+		t.Errorf("Second page should have more")
+	}
+	if page2.NextCursor == "" {
+		t.Errorf("Second page should have next cursor")
+	}
+
+	// Last page
+	pageLast, err := scanPage(page2.NextCursor, 5)
+	if err != nil {
+		t.Fatalf("scanPage failed: %v", err)
+	}
+	if len(pageLast.Results) != 4 {
+		t.Errorf("Last page result count = %d, want 4", len(pageLast.Results))
+	}
+	if pageLast.HasMore {
+		t.Errorf("Last page should not have more")
+	}
+	if pageLast.NextCursor != "" {
+		t.Errorf("Last page should not have next cursor")
+	}
+
+	// Edge: empty page
+	emptyPage, err := scanPage("key10", 3)
+	if err != nil {
+		t.Fatalf("scanPage failed: %v", err)
+	}
+	if len(emptyPage.Results) != 0 {
+		t.Errorf("Empty page result count = %d, want 0", len(emptyPage.Results))
+		for k := range emptyPage.Results {
+			t.Logf("Empty page returned key: %s", k)
+		}
+	}
+	if emptyPage.HasMore {
+		t.Errorf("Empty page should not have more")
+	}
+	if emptyPage.NextCursor != "" {
+		t.Errorf("Empty page should not have next cursor")
 	}
 }
 

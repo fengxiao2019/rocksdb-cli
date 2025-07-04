@@ -89,10 +89,22 @@ type SearchResults struct {
 	QueryTime string         `json:"query_time"` // Time taken for the search
 }
 
+// ScanPageResult contains paginated scan results
+// NextCursor is the last key in this page, or "" if no more
+// HasMore is true if more results exist
+type ScanPageResult struct {
+	Results    map[string]string
+	NextCursor string
+	HasMore    bool
+}
+
+// ScanOptions now supports cursor-based pagination
+// StartAfter: skip all keys <= this key (for forward scan)
 type ScanOptions struct {
-	Limit   int
-	Reverse bool
-	Values  bool
+	Limit      int
+	Reverse    bool
+	Values     bool
+	StartAfter string // cursor for pagination
 }
 
 type KeyValueDB interface {
@@ -100,7 +112,8 @@ type KeyValueDB interface {
 	PutCF(cf, key, value string) error
 	PrefixScanCF(cf, prefix string, limit int) (map[string]string, error)
 	ScanCF(cf string, start, end []byte, opts ScanOptions) (map[string]string, error)
-	GetLastCF(cf string) (string, string, error) // Returns key, value, error
+	ScanCFPage(cf string, start, end []byte, opts ScanOptions) (ScanPageResult, error) // new paginated version
+	GetLastCF(cf string) (string, string, error)                                       // Returns key, value, error
 	ExportToCSV(cf, filePath string) error
 	JSONQueryCF(cf, field, value string) (map[string]string, error) // Query by JSON field
 	SearchCF(cf string, opts SearchOptions) (*SearchResults, error) // Fuzzy search in column family
@@ -116,6 +129,7 @@ type KeyValueDB interface {
 	SmartGetCF(cf, key string) (string, error)
 	SmartPrefixScanCF(cf, prefix string, limit int) (map[string]string, error)
 	SmartScanCF(cf string, start, end string, opts ScanOptions) (map[string]string, error)
+	SmartScanCFPage(cf string, start, end string, opts ScanOptions) (ScanPageResult, error) // new paginated version
 	GetKeyFormatInfo(cf string) (util.KeyFormat, string)
 }
 
@@ -1053,4 +1067,147 @@ func (d *DB) GetKeyFormatInfo(cf string) (util.KeyFormat, string) {
 	}
 
 	return format, description
+}
+
+// ScanCFPage implements cursor-based pagination
+func (d *DB) ScanCFPage(cf string, start, end []byte, opts ScanOptions) (ScanPageResult, error) {
+	h, ok := d.cfHandles[cf]
+	if !ok {
+		return ScanPageResult{}, ErrColumnFamilyNotFound
+	}
+
+	it := d.db.NewIteratorCF(d.ro, h)
+	defer it.Close()
+
+	result := make(map[string]string)
+	startStr := string(start)
+	endStr := string(end)
+	startAfter := opts.StartAfter
+	var lastKey string
+	count := 0
+
+	if opts.Reverse {
+		if len(end) > 0 {
+			it.SeekForPrev(end)
+		} else if len(start) > 0 {
+			it.SeekForPrev(start)
+		} else {
+			it.SeekToLast()
+		}
+		// Advance until key < startAfter
+		if startAfter != "" {
+			for it.Valid() {
+				k := it.Key()
+				kStr := string(k.Data())
+				k.Free()
+				if kStr < startAfter {
+					break
+				}
+				it.Prev()
+			}
+		}
+	} else {
+		if len(start) > 0 {
+			it.Seek(start)
+		} else {
+			it.SeekToFirst()
+		}
+		// Advance until key > startAfter
+		if startAfter != "" {
+			for it.Valid() {
+				k := it.Key()
+				kStr := string(k.Data())
+				k.Free()
+				if kStr > startAfter {
+					break
+				}
+				it.Next()
+			}
+		}
+	}
+
+	// If iterator is invalid after skipping, return empty result
+	if !it.Valid() {
+		return ScanPageResult{Results: map[string]string{}, NextCursor: "", HasMore: false}, nil
+	}
+
+	for it.Valid() {
+		k := it.Key()
+		kStr := string(k.Data())
+
+		// Check bounds
+		if opts.Reverse {
+			if len(start) > 0 && len(end) > 0 && kStr < startStr {
+				k.Free()
+				break
+			}
+			if len(end) > 0 && kStr >= endStr {
+				k.Free()
+				it.Prev()
+				continue
+			}
+		} else {
+			if len(end) > 0 && kStr >= endStr {
+				k.Free()
+				break
+			}
+			if len(start) > 0 && kStr < startStr {
+				k.Free()
+				it.Next()
+				continue
+			}
+		}
+
+		if opts.Values {
+			v := it.Value()
+			result[kStr] = string(v.Data())
+			v.Free()
+		} else {
+			result[kStr] = ""
+		}
+		lastKey = kStr
+		count++
+		k.Free()
+
+		if opts.Limit > 0 && count >= opts.Limit {
+			break
+		}
+
+		if opts.Reverse {
+			it.Prev()
+		} else {
+			it.Next()
+		}
+	}
+
+	hasMore := false
+	nextCursor := ""
+	if opts.Limit > 0 && count >= opts.Limit {
+		if it.Valid() {
+			hasMore = true
+			nextCursor = lastKey
+		}
+	}
+
+	return ScanPageResult{Results: result, NextCursor: nextCursor, HasMore: hasMore}, nil
+}
+
+// SmartScanCFPage: like SmartScanCF, but paginated
+func (d *DB) SmartScanCFPage(cf string, start, end string, opts ScanOptions) (ScanPageResult, error) {
+	format := d.getKeyFormat(cf)
+	var startBytes, endBytes []byte
+	var err error
+	if start != "" && start != "*" {
+		startBytes, err = util.ConvertStringToKeyForScan(start, format, false)
+		if err != nil {
+			startBytes = []byte(start)
+		}
+	}
+	if end != "" && end != "*" {
+		endBytes, err = util.ConvertStringToKeyForScan(end, format, false)
+		if err != nil {
+			endBytes = []byte(end)
+		}
+	}
+	return d.ScanCFPage(cf, startBytes, endBytes, opts)
 }
