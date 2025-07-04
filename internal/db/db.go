@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"rocksdb-cli/internal/util"
+
 	"github.com/linxGnu/grocksdb"
 )
 
@@ -408,7 +410,7 @@ func (d *DB) ExportToCSV(cf, filePath string) error {
 		k := it.Key()
 		v := it.Value()
 
-		err := writer.Write([]string{string(k.Data()), string(v.Data())})
+		err := writer.Write([]string{util.FormatKey(string(k.Data())), string(v.Data())})
 		if err != nil {
 			k.Free()
 			v.Free()

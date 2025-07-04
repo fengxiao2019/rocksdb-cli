@@ -2,12 +2,15 @@ package command
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"rocksdb-cli/internal/db"
 	"rocksdb-cli/internal/graphchain"
 	"rocksdb-cli/internal/jsonutil"
+	"rocksdb-cli/internal/util"
 	"sort"
 	"strconv"
 	"strings"
@@ -313,22 +316,22 @@ func (h *Handler) Execute(input string) bool {
 				if showTimestamp {
 					if timestamp := parseTimestamp(k); timestamp != "" {
 						if opts.Values {
-							fmt.Printf("%s (%s): %s\n", formatKey(k), timestamp, v)
+							fmt.Printf("%s (%s): %s\n", util.FormatKey(k), timestamp, v)
 						} else {
-							fmt.Printf("%s (%s)\n", formatKey(k), timestamp)
+							fmt.Printf("%s (%s)\n", util.FormatKey(k), timestamp)
 						}
 					} else {
 						if opts.Values {
-							fmt.Printf("%s: %s\n", formatKey(k), v)
+							fmt.Printf("%s: %s\n", util.FormatKey(k), v)
 						} else {
-							fmt.Printf("%s\n", formatKey(k))
+							fmt.Printf("%s\n", util.FormatKey(k))
 						}
 					}
 				} else {
 					if opts.Values {
-						fmt.Printf("%s: %s\n", formatKey(k), v)
+						fmt.Printf("%s: %s\n", util.FormatKey(k), v)
 					} else {
-						fmt.Printf("%s\n", formatKey(k))
+						fmt.Printf("%s\n", util.FormatKey(k))
 					}
 				}
 			}
@@ -458,7 +461,7 @@ func (h *Handler) Execute(input string) bool {
 			for _, k := range keys {
 				v := result[k]
 				formattedValue := formatValue(v, pretty)
-				fmt.Printf("%s: %s\n", formatKey(k), formattedValue)
+				fmt.Printf("%s: %s\n", util.FormatKey(k), formattedValue)
 			}
 		}
 	case "listcf":
@@ -514,12 +517,33 @@ func (h *Handler) Execute(input string) bool {
 			return true
 		}
 
-		err := h.DB.ExportToCSV(cf, filePath)
+		// Open file for writing
+		file, err := os.Create(filePath)
 		if err != nil {
 			handleError(err, "Export", cf)
-		} else {
-			fmt.Printf("Successfully exported column family '%s' to '%s'\n", cf, filePath)
+			return true
 		}
+		defer file.Close()
+
+		writer := csv.NewWriter(file)
+		defer writer.Flush()
+
+		// Write header
+		writer.Write([]string{"key", "value"})
+
+		// Get all key-value pairs
+		result, err := h.DB.ScanCF(cf, nil, nil, db.ScanOptions{Values: true})
+		if err != nil {
+			handleError(err, "Export", cf)
+			return true
+		}
+
+		// Write rows
+		for k, v := range result {
+			writer.Write([]string{util.FormatKey(k), v})
+		}
+
+		fmt.Printf("Successfully exported column family '%s' to '%s'\n", cf, filePath)
 	case "last":
 		var cf string
 		var pretty bool
@@ -565,7 +589,7 @@ func (h *Handler) Execute(input string) bool {
 			handleError(err, "Get last", cf)
 		} else {
 			formattedValue := formatValue(value, pretty)
-			fmt.Printf("Last entry in '%s': %s = %s\n", cf, key, formattedValue)
+			fmt.Printf("Last entry in '%s': %s = %s\n", cf, util.FormatKey(key), formattedValue)
 		}
 	case "jsonquery":
 		// Get current CF if available
@@ -611,12 +635,12 @@ func (h *Handler) Execute(input string) bool {
 				fmt.Printf("No entries found in '%s' where field '%s' = '%s'\n", cf, field, value)
 			} else {
 				fmt.Printf("Found %d entries in '%s' where field '%s' = '%s':\n", len(result), cf, field, value)
-				for k, v := range result {
-					formattedValue := formatValue(v, pretty)
-					fmt.Printf("%s: %s\n", k, formattedValue)
-				}
-			}
-		}
+                for k, v := range result {
+                    formattedValue := formatValue(v, pretty)
+                    fmt.Printf("%s: %s\n", util.FormatKey(k), formattedValue)
+                }
+            }
+        }
 	case "stats":
 		// Parse flags and arguments
 		flags, args := parseFlags(parts[1:])
@@ -943,11 +967,11 @@ func (h *Handler) formatCFStats(stats *db.CFStats, detailed, pretty bool) {
 					fmt.Printf("  ... and %d more\n", len(stats.SampleKeys)-5)
 					break
 				}
-				fmt.Printf("  %s\n", key)
+				fmt.Printf("  %s\n", util.FormatKey(key))
+				}
 			}
 		}
 	}
-}
 
 // formatNumber formats large numbers with K/M/B suffixes
 func formatNumber(n int64) string {
@@ -994,7 +1018,7 @@ func (h *Handler) formatSearchResults(results *db.SearchResults, pretty bool) {
 	// Display results
 	for i, result := range results.Results {
 		// Show result number
-		fmt.Printf("[%d] Key: %s", i+1, result.Key)
+		fmt.Printf("[%d] Key: %s", i+1, util.FormatKey(result.Key))
 
 		// Show which fields matched
 		if len(result.MatchedFields) > 0 {
@@ -1173,35 +1197,4 @@ func (h *Handler) clearMemory() {
 	fmt.Println("✅ Conversation memory cleared successfully")
 }
 
-// formatKey attempts to format a key in a human-readable way
-func formatKey(key string) string {
-	// Try to decode as a long integer (big-endian)
-	if len(key) == 8 {
-		var val uint64
-		for i := 0; i < 8; i++ {
-			val = (val << 8) | uint64(key[i])
-		}
-		return fmt.Sprintf("%d (0x%x)", val, val)
-	}
 
-	// Check if the key is printable ASCII
-	isPrintable := true
-	for i := 0; i < len(key); i++ {
-		if key[i] < 32 || key[i] > 126 {
-			isPrintable = false
-			break
-		}
-	}
-
-	if !isPrintable {
-		// Show as hex if not printable
-		var hexStr strings.Builder
-		hexStr.WriteString("0x")
-		for i := 0; i < len(key); i++ {
-			hexStr.WriteString(fmt.Sprintf("%02x", key[i]))
-		}
-		return hexStr.String()
-	}
-
-	return key
-}
