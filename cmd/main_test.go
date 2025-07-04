@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"rocksdb-cli/internal/db"
+	"rocksdb-cli/internal/util"
 	"strings"
 	"testing"
 )
@@ -622,4 +623,32 @@ func TestExecutePrefix(t *testing.T) {
 // Helper function to create string pointer
 func stringPtr(s string) *string {
 	return &s
+}
+
+// Smart key conversion methods for the new interface
+func (m *mockDB) SmartGetCF(cf, key string) (string, error) {
+	// For testing, just delegate to regular GetCF
+	return m.GetCF(cf, key)
+}
+
+func (m *mockDB) SmartPrefixScanCF(cf, prefix string, limit int) (map[string]string, error) {
+	// For testing, just delegate to regular PrefixScanCF
+	return m.PrefixScanCF(cf, prefix, limit)
+}
+
+func (m *mockDB) SmartScanCF(cf string, start, end string, opts db.ScanOptions) (map[string]string, error) {
+	// For testing, convert strings to bytes and delegate to regular ScanCF
+	var startBytes, endBytes []byte
+	if start != "" && start != "*" {
+		startBytes = []byte(start)
+	}
+	if end != "" && end != "*" {
+		endBytes = []byte(end)
+	}
+	return m.ScanCF(cf, startBytes, endBytes, opts)
+}
+
+func (m *mockDB) GetKeyFormatInfo(cf string) (util.KeyFormat, string) {
+	// For testing, just return string format
+	return util.KeyFormatString, "Printable string keys"
 }

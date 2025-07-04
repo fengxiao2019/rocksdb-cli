@@ -6,6 +6,7 @@ import (
 
 	"rocksdb-cli/internal/db"
 	"rocksdb-cli/internal/jsonutil"
+	"rocksdb-cli/internal/util"
 
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -285,6 +286,34 @@ func (m *MockKeyValueDB) SearchCF(cf string, opts db.SearchOptions) (*db.SearchR
 
 	results.Total = len(results.Results)
 	return results, nil
+}
+
+// Smart key conversion methods for the new interface
+func (m *MockKeyValueDB) SmartGetCF(cf, key string) (string, error) {
+	// For testing, just delegate to regular GetCF
+	return m.GetCF(cf, key)
+}
+
+func (m *MockKeyValueDB) SmartPrefixScanCF(cf, prefix string, limit int) (map[string]string, error) {
+	// For testing, just delegate to regular PrefixScanCF
+	return m.PrefixScanCF(cf, prefix, limit)
+}
+
+func (m *MockKeyValueDB) SmartScanCF(cf string, start, end string, opts db.ScanOptions) (map[string]string, error) {
+	// For testing, convert strings to bytes and delegate to regular ScanCF
+	var startBytes, endBytes []byte
+	if start != "" {
+		startBytes = []byte(start)
+	}
+	if end != "" {
+		endBytes = []byte(end)
+	}
+	return m.ScanCF(cf, startBytes, endBytes, opts)
+}
+
+func (m *MockKeyValueDB) GetKeyFormatInfo(cf string) (util.KeyFormat, string) {
+	// For testing, just return string format
+	return util.KeyFormatString, "Printable string keys"
 }
 
 func TestNewToolManager(t *testing.T) {

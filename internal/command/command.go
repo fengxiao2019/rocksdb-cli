@@ -2,11 +2,9 @@ package command
 
 import (
 	"context"
-	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"rocksdb-cli/internal/db"
 	"rocksdb-cli/internal/graphchain"
 	"rocksdb-cli/internal/jsonutil"
@@ -181,7 +179,8 @@ func (h *Handler) Execute(input string) bool {
 	case "scan":
 		flags, args := parseFlags(parts[1:])
 		cf := ""
-		var start, end []byte
+		var startStr, endStr string
+		useSmart := flags["smart"] != "false" // Default to true, can disable with --smart=false
 
 		// Get current CF if available
 		currentCF := ""
@@ -192,8 +191,9 @@ func (h *Handler) Execute(input string) bool {
 		// Parse column family and range
 		switch len(args) {
 		case 0: // scan (no args)
-			fmt.Println("Usage: scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no] [--timestamp]")
+			fmt.Println("Usage: scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no] [--timestamp] [--smart=true|false]")
 			fmt.Println("  Use * as wildcard to scan all entries (e.g., scan * or scan * *)")
+			fmt.Println("  --smart=false disables automatic key format conversion")
 			return true
 		case 1: // scan <start> (using current CF) or scan * (scan all)
 			if currentCF == "" {
@@ -203,11 +203,11 @@ func (h *Handler) Execute(input string) bool {
 			cf = currentCF
 			// Handle * wildcard to scan all entries
 			if args[0] == "*" {
-				// Leave start and end as nil to scan all entries
-				start = nil
-				end = nil
+				// Leave start and end empty to scan all entries
+				startStr = ""
+				endStr = ""
 			} else {
-				start = []byte(args[0])
+				startStr = args[0]
 			}
 		case 2:
 			// Check if first arg is likely a CF name by checking if it exists
@@ -217,40 +217,41 @@ func (h *Handler) Execute(input string) bool {
 				cf = currentCF
 				// Handle * wildcards
 				if args[0] == "*" {
-					start = nil
+					startStr = ""
 				} else {
-					start = []byte(args[0])
+					startStr = args[0]
 				}
 				if args[1] == "*" {
-					end = nil
+					endStr = ""
 				} else {
-					end = []byte(args[1])
+					endStr = args[1]
 				}
 			} else {
 				// scan <cf> <start> (no current CF set)
 				cf = args[0]
 				if args[1] == "*" {
-					start = nil
+					startStr = ""
 				} else {
-					start = []byte(args[1])
+					startStr = args[1]
 				}
 			}
 		case 3: // scan <cf> <start> <end>
 			cf = args[0]
 			// Handle * wildcards
 			if args[1] == "*" {
-				start = nil
+				startStr = ""
 			} else {
-				start = []byte(args[1])
+				startStr = args[1]
 			}
 			if args[2] == "*" {
-				end = nil
+				endStr = ""
 			} else {
-				end = []byte(args[2])
+				endStr = args[2]
 			}
 		default:
-			fmt.Println("Usage: scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no] [--timestamp]")
+			fmt.Println("Usage: scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no] [--timestamp] [--smart=true|false]")
 			fmt.Println("  Use * as wildcard to scan all entries (e.g., scan * or scan * *)")
+			fmt.Println("  --smart=false disables automatic key format conversion")
 			return true
 		}
 
@@ -279,7 +280,23 @@ func (h *Handler) Execute(input string) bool {
 		// Check for timestamp flag
 		showTimestamp := flags["timestamp"] == "true"
 
-		result, err := h.DB.ScanCF(cf, start, end, opts)
+		var result map[string]string
+		var err error
+
+		if useSmart {
+			result, err = h.DB.SmartScanCF(cf, startStr, endStr, opts)
+		} else {
+			// Convert strings to bytes for regular scan
+			var start, end []byte
+			if startStr != "" {
+				start = []byte(startStr)
+			}
+			if endStr != "" {
+				end = []byte(endStr)
+			}
+			result, err = h.DB.ScanCF(cf, start, end, opts)
+		}
+
 		if err != nil {
 			handleError(err, "Scan", cf)
 		} else {
@@ -337,43 +354,46 @@ func (h *Handler) Execute(input string) bool {
 			}
 		}
 	case "get":
-		cf, key, pretty := "", "", false
-		switch len(parts) {
-		case 2: // get <key>
-			if s, ok := h.State.(*ReplState); ok && s != nil {
-				cf = s.CurrentCF
-				key = parts[1]
-			} else {
+		// Parse flags and arguments
+		flags, args := parseFlags(parts[1:])
+		pretty := flags["pretty"] == "true"
+		useSmart := flags["smart"] != "false" // Default to true, can disable with --smart=false
+
+		// Get current CF if available
+		currentCF := ""
+		if s, ok := h.State.(*ReplState); ok && s != nil {
+			currentCF = s.CurrentCF
+		}
+
+		var cf, key string
+
+		switch len(args) {
+		case 1: // get <key> (using current CF)
+			if currentCF == "" {
 				fmt.Println("No current column family set")
 				return true
 			}
-		case 3:
-			if parts[2] == "--pretty" { // get <key> --pretty
-				if s, ok := h.State.(*ReplState); ok && s != nil {
-					cf = s.CurrentCF
-					key = parts[1]
-					pretty = true
-				} else {
-					fmt.Println("No current column family set")
-					return true
-				}
-			} else { // get <cf> <key>
-				cf = parts[1]
-				key = parts[2]
-			}
-		case 4: // get <cf> <key> --pretty
-			if parts[3] != "--pretty" {
-				fmt.Println("Usage: get [<cf>] <key> [--pretty]")
-				return true
-			}
-			cf = parts[1]
-			key = parts[2]
-			pretty = true
+			cf = currentCF
+			key = args[0]
+		case 2: // get <cf> <key>
+			cf = args[0]
+			key = args[1]
 		default:
-			fmt.Println("Usage: get [<cf>] <key> [--pretty]")
+			fmt.Println("Usage: get [<cf>] <key> [--pretty] [--smart=true|false]")
+			fmt.Println("  Query by key with automatic binary key conversion")
+			fmt.Println("  --smart=false disables automatic key format conversion")
 			return true
 		}
-		val, err := h.DB.GetCF(cf, key)
+
+		var val string
+		var err error
+
+		if useSmart {
+			val, err = h.DB.SmartGetCF(cf, key)
+		} else {
+			val, err = h.DB.GetCF(cf, key)
+		}
+
 		if err != nil {
 			handleError(err, "Query", key, cf)
 		} else {
@@ -418,6 +438,7 @@ func (h *Handler) Execute(input string) bool {
 		// Parse flags and arguments
 		flags, args := parseFlags(parts[1:])
 		pretty := flags["pretty"] == "true"
+		useSmart := flags["smart"] != "false" // Default to true, can disable with --smart=false
 
 		var cf, prefix string
 
@@ -433,12 +454,21 @@ func (h *Handler) Execute(input string) bool {
 			cf = args[0]
 			prefix = args[1]
 		default:
-			fmt.Println("Usage: prefix [<cf>] <prefix> [--pretty]")
-			fmt.Println("  Query by key prefix (use --pretty for JSON formatting)")
+			fmt.Println("Usage: prefix [<cf>] <prefix> [--pretty] [--smart=true|false]")
+			fmt.Println("  Query by key prefix with automatic binary key conversion")
+			fmt.Println("  --smart=false disables automatic key format conversion")
 			return true
 		}
 
-		result, err := h.DB.PrefixScanCF(cf, prefix, 20)
+		var result map[string]string
+		var err error
+
+		if useSmart {
+			result, err = h.DB.SmartPrefixScanCF(cf, prefix, 20)
+		} else {
+			result, err = h.DB.PrefixScanCF(cf, prefix, 20)
+		}
+
 		if err != nil {
 			handleError(err, "Prefix scan", cf)
 		} else {
@@ -462,6 +492,12 @@ func (h *Handler) Execute(input string) bool {
 				v := result[k]
 				formattedValue := formatValue(v, pretty)
 				fmt.Printf("%s: %s\n", util.FormatKey(k), formattedValue)
+			}
+
+			// In the prefix command handler, after detecting key format:
+			keyFormat, _ := h.DB.GetKeyFormatInfo(cf)
+			if keyFormat == util.KeyFormatUint64BE || keyFormat == util.KeyFormatHex || keyFormat == util.KeyFormatMixed {
+				fmt.Println("[Notice] This column family uses binary/uint64 keys. Prefix only matches byte prefixes, not numeric string prefixes. For example, use a hex prefix like 'prefix 0x00' to match all keys starting with 0x00, or use a full uint64 value.")
 			}
 		}
 	case "listcf":
@@ -517,33 +553,12 @@ func (h *Handler) Execute(input string) bool {
 			return true
 		}
 
-		// Open file for writing
-		file, err := os.Create(filePath)
+		err := h.DB.ExportToCSV(cf, filePath)
 		if err != nil {
 			handleError(err, "Export", cf)
-			return true
+		} else {
+			fmt.Printf("Successfully exported column family '%s' to '%s'\n", cf, filePath)
 		}
-		defer file.Close()
-
-		writer := csv.NewWriter(file)
-		defer writer.Flush()
-
-		// Write header
-		writer.Write([]string{"key", "value"})
-
-		// Get all key-value pairs
-		result, err := h.DB.ScanCF(cf, nil, nil, db.ScanOptions{Values: true})
-		if err != nil {
-			handleError(err, "Export", cf)
-			return true
-		}
-
-		// Write rows
-		for k, v := range result {
-			writer.Write([]string{util.FormatKey(k), v})
-		}
-
-		fmt.Printf("Successfully exported column family '%s' to '%s'\n", cf, filePath)
 	case "last":
 		var cf string
 		var pretty bool
@@ -635,12 +650,12 @@ func (h *Handler) Execute(input string) bool {
 				fmt.Printf("No entries found in '%s' where field '%s' = '%s'\n", cf, field, value)
 			} else {
 				fmt.Printf("Found %d entries in '%s' where field '%s' = '%s':\n", len(result), cf, field, value)
-                for k, v := range result {
-                    formattedValue := formatValue(v, pretty)
-                    fmt.Printf("%s: %s\n", util.FormatKey(k), formattedValue)
-                }
-            }
-        }
+				for k, v := range result {
+					formattedValue := formatValue(v, pretty)
+					fmt.Printf("%s: %s\n", util.FormatKey(k), formattedValue)
+				}
+			}
+		}
 	case "stats":
 		// Parse flags and arguments
 		flags, args := parseFlags(parts[1:])
@@ -788,25 +803,122 @@ func (h *Handler) Execute(input string) bool {
 		} else {
 			h.formatSearchResults(results, flags["pretty"] == "true")
 		}
+	case "keyformat":
+		// Parse arguments
+		_, args := parseFlags(parts[1:])
+
+		// Get current CF if available
+		currentCF := ""
+		if s, ok := h.State.(*ReplState); ok && s != nil {
+			currentCF = s.CurrentCF
+		}
+
+		var cf string
+
+		switch len(args) {
+		case 0: // keyformat (show current CF format)
+			if currentCF == "" {
+				fmt.Println("No current column family set")
+				return true
+			}
+			cf = currentCF
+		case 1: // keyformat <cf>
+			cf = args[0]
+		default:
+			fmt.Println("Usage: keyformat [<cf>]")
+			fmt.Println("  Show the detected key format for a column family")
+			fmt.Println("  Provides examples of how to query binary keys with string inputs")
+			return true
+		}
+
+		// Get key format information
+		keyFormat, description := h.DB.GetKeyFormatInfo(cf)
+
+		fmt.Printf("Column Family: %s\n", cf)
+		fmt.Printf("Detected Key Format: %s\n", description)
+		fmt.Println()
+
+		// Show examples based on format
+		switch keyFormat {
+		case util.KeyFormatUint64BE:
+			fmt.Println("Examples for querying with string inputs:")
+			fmt.Println("  get binary_keys \"123456789\"     # Query uint64 key as decimal")
+			fmt.Println("  get binary_keys \"0x75bf1515\"   # Query uint64 key as hex")
+			fmt.Println("  prefix binary_keys \"123456\"    # Find keys starting with number")
+			fmt.Println("  scan binary_keys \"100\" \"200\"  # Scan range of uint64 keys")
+			fmt.Println()
+			fmt.Println("Note: All string inputs are automatically converted to 8-byte big-endian format")
+
+		case util.KeyFormatHex:
+			fmt.Println("Examples for querying with string inputs:")
+			fmt.Println("  get hex_keys \"deadbeef\"         # Query hex key")
+			fmt.Println("  get hex_keys \"0xdeadbeef\"       # Query hex key with 0x prefix")
+			fmt.Println("  prefix hex_keys \"dead\"          # Find keys starting with hex pattern")
+			fmt.Println("  scan hex_keys \"aa\" \"ff\"        # Scan range of hex keys")
+			fmt.Println()
+			fmt.Println("Note: String inputs are converted to binary from hex representation")
+
+		case util.KeyFormatMixed:
+			fmt.Println("Mixed key format detected. Examples:")
+			fmt.Println("  get mixed_keys \"123456789\"      # Try as uint64 first")
+			fmt.Println("  get mixed_keys \"deadbeef\"       # Try as hex if uint64 fails")
+			fmt.Println("  get mixed_keys \"string_key\"     # Fall back to string key")
+			fmt.Println()
+			fmt.Println("Note: Smart conversion tries multiple formats automatically")
+
+		case util.KeyFormatString:
+			fmt.Println("String key format detected - no conversion needed.")
+			fmt.Println("Examples:")
+			fmt.Println("  get string_keys \"my_key\"        # Direct string key lookup")
+			fmt.Println("  prefix string_keys \"user:\"      # String prefix matching")
+			fmt.Println()
+			fmt.Println("Note: You can disable smart conversion with --smart=false")
+		}
+
+		fmt.Println()
+		fmt.Println("Smart conversion is enabled by default for get, prefix, and scan commands.")
+		fmt.Println("Use --smart=false to disable automatic key format conversion.")
+
+		// Show some actual sample keys if available
+		if stats, err := h.DB.GetCFStats(cf); err == nil && len(stats.SampleKeys) > 0 {
+			fmt.Println()
+			fmt.Printf("Sample keys from '%s':\n", cf)
+			for i, key := range stats.SampleKeys {
+				if i >= 5 { // Limit to first 5 keys
+					fmt.Printf("  ... and %d more\n", len(stats.SampleKeys)-5)
+					break
+				}
+				fmt.Printf("  %s\n", util.FormatKey(key))
+			}
+		}
 	case "help":
 		fmt.Println("Available commands:")
 		fmt.Println("  usecf <cf>                    - Switch current column family")
-		fmt.Println("  get [<cf>] <key> [--pretty]   - Query by key (use --pretty for JSON formatting)")
+		fmt.Println("  get [<cf>] <key> [--pretty] [--smart=true|false]   - Query by key with smart binary conversion")
 		fmt.Println("  put [<cf>] <key> <value>      - Insert/Update key-value pair")
-		fmt.Println("  prefix [<cf>] <prefix> [--pretty] - Query by key prefix (use --pretty for JSON formatting)")
-		fmt.Println("  scan [<cf>] [start] [end]     - Scan range with options")
-		fmt.Println("    Options: --limit=N --reverse --values=no --timestamp")
+		fmt.Println("  prefix [<cf>] <prefix> [--pretty] [--smart=true|false] - Query by key prefix with smart conversion")
+		fmt.Println("  scan [<cf>] [start] [end]     - Scan range with options and smart conversion")
+		fmt.Println("    Options: --limit=N --reverse --values=no --timestamp --smart=true|false")
 		fmt.Println("    Use * as wildcard to scan all entries (e.g., scan * or scan * *)")
 		fmt.Println("  last [<cf>] [--pretty]        - Get last key-value pair from CF")
 		fmt.Println("  export [<cf>] <file_path>     - Export CF to CSV file")
 		fmt.Println("  jsonquery [<cf>] <field> <value> [--pretty] - Query entries by JSON field value")
 		fmt.Println("  stats [<cf>] [--detailed] [--pretty] - Show database/column family statistics")
+		fmt.Println("  keyformat [<cf>]              - Show detected key format and conversion examples")
 		fmt.Println("  listcf                        - List all column families")
 		fmt.Println("  createcf <cf>                 - Create new column family")
 		fmt.Println("  dropcf <cf>                   - Drop column family")
 		fmt.Println("  search [<cf>] [options]        - Fuzzy search for keys and/or values")
 		fmt.Println("  help                          - Show this help message")
 		fmt.Println("  exit/quit                     - Exit the CLI")
+		fmt.Println("")
+		fmt.Println("🔄 Smart Key Conversion:")
+		fmt.Println("  The CLI automatically detects binary key formats (uint64, hex) in column families")
+		fmt.Println("  When enabled (default), you can query binary keys using string inputs:")
+		fmt.Println("    get binary_keys \"123456789\"   # Query uint64 key with decimal string")
+		fmt.Println("    get hex_keys \"deadbeef\"       # Query hex key with hex string")
+		fmt.Println("  Use 'keyformat [<cf>]' to see detected format and examples")
+		fmt.Println("  Add --smart=false to any command to disable conversion")
 		fmt.Println("")
 		fmt.Println("🤖 AI-Powered Features:")
 		fmt.Println("  For natural language queries, restart with:")
@@ -968,10 +1080,10 @@ func (h *Handler) formatCFStats(stats *db.CFStats, detailed, pretty bool) {
 					break
 				}
 				fmt.Printf("  %s\n", util.FormatKey(key))
-				}
 			}
 		}
 	}
+}
 
 // formatNumber formats large numbers with K/M/B suffixes
 func formatNumber(n int64) string {
@@ -1196,5 +1308,3 @@ func (h *Handler) clearMemory() {
 
 	fmt.Println("✅ Conversation memory cleared successfully")
 }
-
-

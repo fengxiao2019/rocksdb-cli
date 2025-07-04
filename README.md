@@ -733,4 +733,8 @@ The Docker build automatically handles proxy configurations:
 
 ## License
 
-MIT License - see LICENSE file for details 
+MIT License - see LICENSE file for details
+
+# Prefix Scan Caveats for Binary/Uint64 Keys
+
+> For column families with binary or uint64 keys, the prefix command only matches byte prefixes, not numeric string prefixes. For example, `prefix 0x00` matches all keys starting with byte 0x00, but `prefix 123` only matches the key with value 123 as an 8-byte big-endian integer. 

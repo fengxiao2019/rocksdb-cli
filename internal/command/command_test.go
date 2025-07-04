@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"rocksdb-cli/internal/db"
+	"rocksdb-cli/internal/util"
 	"strconv"
 	"strings"
 	"testing"
@@ -195,7 +196,7 @@ func (m *mockDB) ExportToCSV(cf, filePath string) error {
 func (m *mockDB) Close() {}
 
 func (m *mockDB) IsReadOnly() bool {
-	return false // Mock DB is always read-write for testing
+	return false
 }
 
 // SearchCF implements fuzzy search for testing
@@ -1399,4 +1400,32 @@ func TestSearchCommand(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Smart key conversion methods for the new interface
+func (m *mockDB) SmartGetCF(cf, key string) (string, error) {
+	// For testing, just delegate to regular GetCF
+	return m.GetCF(cf, key)
+}
+
+func (m *mockDB) SmartPrefixScanCF(cf, prefix string, limit int) (map[string]string, error) {
+	// For testing, just delegate to regular PrefixScanCF
+	return m.PrefixScanCF(cf, prefix, limit)
+}
+
+func (m *mockDB) SmartScanCF(cf string, start, end string, opts db.ScanOptions) (map[string]string, error) {
+	// For testing, convert strings to bytes and delegate to regular ScanCF
+	var startBytes, endBytes []byte
+	if start != "" {
+		startBytes = []byte(start)
+	}
+	if end != "" {
+		endBytes = []byte(end)
+	}
+	return m.ScanCF(cf, startBytes, endBytes, opts)
+}
+
+func (m *mockDB) GetKeyFormatInfo(cf string) (util.KeyFormat, string) {
+	// For testing, just return string format
+	return util.KeyFormatString, "Printable string keys"
 }

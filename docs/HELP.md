@@ -477,3 +477,5 @@ For issues and questions:
 ---
 
 *This help document covers RocksDB CLI v1.0+. For older versions, some features may not be available.* 
+
+[Note] For binary/uint64 keys, prefix only matches byte prefixes, not numeric string prefixes. Example: `prefix 0x00` matches all keys starting with byte 0x00; `prefix 123` only matches the key with value 123 as 8-byte big-endian. 

@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"rocksdb-cli/internal/util"
@@ -110,14 +111,22 @@ type KeyValueDB interface {
 	GetDatabaseStats() (*DatabaseStats, error) // Get overall database statistics
 	IsReadOnly() bool
 	Close()
+
+	// Smart key conversion methods
+	SmartGetCF(cf, key string) (string, error)
+	SmartPrefixScanCF(cf, prefix string, limit int) (map[string]string, error)
+	SmartScanCF(cf string, start, end string, opts ScanOptions) (map[string]string, error)
+	GetKeyFormatInfo(cf string) (util.KeyFormat, string)
 }
 
 type DB struct {
-	db        *grocksdb.DB
-	cfHandles map[string]*grocksdb.ColumnFamilyHandle
-	ro        *grocksdb.ReadOptions
-	wo        *grocksdb.WriteOptions
-	readOnly  bool
+	db         *grocksdb.DB
+	cfHandles  map[string]*grocksdb.ColumnFamilyHandle
+	ro         *grocksdb.ReadOptions
+	wo         *grocksdb.WriteOptions
+	readOnly   bool
+	keyFormats map[string]util.KeyFormat // Cache of detected key formats per CF
+	formatMux  sync.RWMutex              // Mutex for keyFormats map
 }
 
 func Open(path string) (*DB, error) {
@@ -161,11 +170,13 @@ func OpenWithOptions(path string, readOnly bool) (*DB, error) {
 		cfHandleMap[name] = cfHandles[i]
 	}
 	return &DB{
-		db:        db,
-		cfHandles: cfHandleMap,
-		ro:        grocksdb.NewDefaultReadOptions(),
-		wo:        grocksdb.NewDefaultWriteOptions(),
-		readOnly:  readOnly,
+		db:         db,
+		cfHandles:  cfHandleMap,
+		ro:         grocksdb.NewDefaultReadOptions(),
+		wo:         grocksdb.NewDefaultWriteOptions(),
+		readOnly:   readOnly,
+		keyFormats: make(map[string]util.KeyFormat),
+		formatMux:  sync.RWMutex{},
 	}, nil
 }
 
@@ -872,4 +883,174 @@ func wildcardMatch(text, pattern string, textIdx, patternIdx int) bool {
 		}
 		return false
 	}
+}
+
+// getKeyFormat returns the cached key format for a column family, detecting it if needed
+func (d *DB) getKeyFormat(cf string) util.KeyFormat {
+	d.formatMux.RLock()
+	if format, exists := d.keyFormats[cf]; exists {
+		d.formatMux.RUnlock()
+		return format
+	}
+	d.formatMux.RUnlock()
+
+	// Format not cached, detect it
+	format := d.detectKeyFormat(cf)
+
+	d.formatMux.Lock()
+	if d.keyFormats == nil {
+		d.keyFormats = make(map[string]util.KeyFormat)
+	}
+	d.keyFormats[cf] = format
+	d.formatMux.Unlock()
+
+	return format
+}
+
+// detectKeyFormat analyzes keys in a column family to determine their format
+func (d *DB) detectKeyFormat(cf string) util.KeyFormat {
+	h, ok := d.cfHandles[cf]
+	if !ok {
+		return util.KeyFormatString
+	}
+
+	it := d.db.NewIteratorCF(d.ro, h)
+	defer it.Close()
+
+	var sampleKeys []string
+	sampleSize := 0
+	maxSamples := 20 // Sample up to 20 keys for format detection
+
+	// Collect sample keys
+	for it.SeekToFirst(); it.Valid() && sampleSize < maxSamples; it.Next() {
+		k := it.Key()
+		sampleKeys = append(sampleKeys, string(k.Data()))
+		k.Free()
+		sampleSize++
+	}
+
+	return util.DetectKeyFormat(sampleKeys)
+}
+
+// InvalidateKeyFormatCache clears the cached key format for a column family
+func (d *DB) InvalidateKeyFormatCache(cf string) {
+	d.formatMux.Lock()
+	if d.keyFormats != nil {
+		delete(d.keyFormats, cf)
+	}
+	d.formatMux.Unlock()
+}
+
+// SmartGetCF gets a value by key, automatically converting string input to appropriate binary format
+func (d *DB) SmartGetCF(cf, key string) (string, error) {
+	// Get the key format for this column family
+	format := d.getKeyFormat(cf)
+
+	// Convert string input to appropriate binary key
+	binaryKey, err := util.ConvertStringToKey(key, format)
+	if err != nil {
+		// If conversion fails, fall back to original string key
+		binaryKey = []byte(key)
+	}
+
+	h, ok := d.cfHandles[cf]
+	if !ok {
+		return "", ErrColumnFamilyNotFound
+	}
+
+	val, err := d.db.GetCF(d.ro, h, binaryKey)
+	if err != nil {
+		return "", err
+	}
+	defer val.Free()
+	if !val.Exists() {
+		return "", ErrKeyNotFound
+	}
+	return string(val.Data()), nil
+}
+
+// SmartPrefixScanCF performs prefix scan with automatic key conversion
+func (d *DB) SmartPrefixScanCF(cf, prefix string, limit int) (map[string]string, error) {
+	// Get the key format for this column family
+	format := d.getKeyFormat(cf)
+
+	// Convert string prefix to appropriate binary format
+	binaryPrefix, err := util.ConvertStringToKeyForScan(prefix, format, true)
+	if err != nil {
+		// If conversion fails, fall back to original string prefix
+		binaryPrefix = []byte(prefix)
+	}
+
+	h, ok := d.cfHandles[cf]
+	if !ok {
+		return nil, ErrColumnFamilyNotFound
+	}
+
+	it := d.db.NewIteratorCF(d.ro, h)
+	defer it.Close()
+	result := make(map[string]string)
+
+	for it.Seek(binaryPrefix); it.Valid(); it.Next() {
+		k := it.Key()
+		v := it.Value()
+		if !hasPrefix(k.Data(), binaryPrefix) {
+			k.Free()
+			v.Free()
+			break
+		}
+		result[string(k.Data())] = string(v.Data())
+		k.Free()
+		v.Free()
+		if limit > 0 && len(result) >= limit {
+			break
+		}
+	}
+	return result, nil
+}
+
+// SmartScanCF performs range scan with automatic key conversion
+func (d *DB) SmartScanCF(cf string, start, end string, opts ScanOptions) (map[string]string, error) {
+	// Get the key format for this column family
+	format := d.getKeyFormat(cf)
+
+	// Convert string bounds to appropriate binary format
+	var startBytes, endBytes []byte
+	var err error
+
+	if start != "" && start != "*" {
+		startBytes, err = util.ConvertStringToKeyForScan(start, format, false)
+		if err != nil {
+			startBytes = []byte(start) // Fall back to string
+		}
+	}
+
+	if end != "" && end != "*" {
+		endBytes, err = util.ConvertStringToKeyForScan(end, format, false)
+		if err != nil {
+			endBytes = []byte(end) // Fall back to string
+		}
+	}
+
+	return d.ScanCF(cf, startBytes, endBytes, opts)
+}
+
+// GetKeyFormatInfo returns information about the detected key format for a column family
+func (d *DB) GetKeyFormatInfo(cf string) (util.KeyFormat, string) {
+	format := d.getKeyFormat(cf)
+	var description string
+
+	switch format {
+	case util.KeyFormatUint64BE:
+		description = "8-byte big-endian unsigned integers"
+	case util.KeyFormatHex:
+		description = "Hexadecimal-encoded binary data"
+	case util.KeyFormatMixed:
+		description = "Mixed format (binary and string keys)"
+	case util.KeyFormatString:
+		description = "Printable string keys"
+	default:
+		description = "Unknown format"
+	}
+
+	return format, description
 }

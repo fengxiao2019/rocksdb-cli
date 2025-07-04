@@ -10,6 +10,7 @@ import (
 	"rocksdb-cli/internal/graphchain"
 	"rocksdb-cli/internal/jsonutil"
 	"rocksdb-cli/internal/repl"
+	"rocksdb-cli/internal/util"
 	"sort"
 	"strings"
 	"syscall"
@@ -118,7 +119,9 @@ INTERACTIVE COMMANDS:
     # Data operations
     get [<cf>] <key> [--pretty]  Query by key (use --pretty for JSON formatting)
     put [<cf>] <key> <value>     Insert/Update key-value pair
-    prefix [<cf>] <prefix> [--pretty]  Query by key prefix (supports --pretty)
+    prefix [<cf>] <prefix> [--pretty] [--smart]  Query by key prefix (supports --pretty for JSON)
+      [Note] For binary/uint64 keys, prefix only matches byte prefixes, not numeric string prefixes.
+      Example: prefix 0x00 matches all keys starting with byte 0x00; prefix 123 only matches the key with value 123 as 8-byte big-endian.
     scan [<cf>] [start] [end] [options]  Scan range with options
     last [<cf>] [--pretty]       Get last key-value pair from CF
 
@@ -153,16 +156,15 @@ func formatValue(value string, pretty bool) string {
 	return jsonutil.PrettyPrintWithNestedExpansion(value)
 }
 
-// executeScan executes a scan operation with the given parameters
-// This function avoids code duplication between interactive and non-interactive modes
+// executeScan executes a scan operation with smart key conversion
 func executeScan(rdb db.KeyValueDB, cf string, start, end *string, limit int, reverse, keysOnly bool) error {
-	// Convert start and end to byte slices, handling * wildcard
-	var startBytes, endBytes []byte
-	if start != nil && *start != "*" && *start != "" {
-		startBytes = []byte(*start)
+	// Convert pointers to strings for smart scan
+	var startStr, endStr string
+	if start != nil {
+		startStr = *start
 	}
-	if end != nil && *end != "*" && *end != "" {
-		endBytes = []byte(*end)
+	if end != nil {
+		endStr = *end
 	}
 
 	// Set up scan options
@@ -174,13 +176,13 @@ func executeScan(rdb db.KeyValueDB, cf string, start, end *string, limit int, re
 		opts.Limit = limit
 	}
 
-	// Execute scan
-	result, err := rdb.ScanCF(cf, startBytes, endBytes, opts)
+	// Execute smart scan (automatically handles key format conversion)
+	result, err := rdb.SmartScanCF(cf, startStr, endStr, opts)
 	if err != nil {
 		return fmt.Errorf("scan failed: %v", err)
 	}
 
-	// Sort keys to ensure consistent output order (same logic as interactive mode)
+	// Sort keys to ensure consistent output order
 	keys := make([]string, 0, len(result))
 	for k := range result {
 		keys = append(keys, k)
@@ -193,13 +195,14 @@ func executeScan(rdb db.KeyValueDB, cf string, start, end *string, limit int, re
 		sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 	}
 
-	// Output in sorted order
+	// Output in sorted order with proper key formatting
 	for _, k := range keys {
+		formattedKey := util.FormatKey(k)
 		if keysOnly {
-			fmt.Printf("%s\n", k)
+			fmt.Printf("%s\n", formattedKey)
 		} else {
 			v := result[k]
-			fmt.Printf("%s: %s\n", k, v)
+			fmt.Printf("%s: %s\n", formattedKey, v)
 		}
 	}
 
@@ -209,13 +212,13 @@ func executeScan(rdb db.KeyValueDB, cf string, start, end *string, limit int, re
 // executePrefix executes a prefix scan operation with the given parameters
 // This function avoids code duplication between interactive and non-interactive modes
 func executePrefix(rdb db.KeyValueDB, cf, prefix string, pretty bool) error {
-	// Execute prefix scan with default limit of 20 (same as interactive mode)
-	result, err := rdb.PrefixScanCF(cf, prefix, 20)
+	// Execute smart prefix scan with default limit of 20
+	result, err := rdb.SmartPrefixScanCF(cf, prefix, 20)
 	if err != nil {
 		return fmt.Errorf("prefix scan failed: %v", err)
 	}
 
-	// Sort keys to ensure consistent output order (same logic as interactive mode)
+	// Sort keys to ensure consistent output order
 	keys := make([]string, 0, len(result))
 	for k := range result {
 		keys = append(keys, k)
@@ -224,11 +227,12 @@ func executePrefix(rdb db.KeyValueDB, cf, prefix string, pretty bool) error {
 	// Sort in lexicographical order
 	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
 
-	// Output in sorted order with optional pretty printing
+	// Output in sorted order with proper key formatting and optional pretty printing
 	for _, k := range keys {
 		v := result[k]
+		formattedKey := util.FormatKey(k)
 		formattedValue := formatValue(v, pretty)
-		fmt.Printf("%s: %s\n", k, formattedValue)
+		fmt.Printf("%s: %s\n", formattedKey, formattedValue)
 	}
 
 	return nil
