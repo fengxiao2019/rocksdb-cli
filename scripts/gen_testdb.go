@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"os"
 
@@ -20,7 +21,7 @@ func main() {
 	opts.SetCreateIfMissingColumnFamilies(true)
 
 	// Define column families
-	cfNames := []string{"default", "users", "products", "logs"}
+	cfNames := []string{"default", "users", "products", "logs", "binary_keys"}
 	cfOpts := make([]*grocksdb.Options, len(cfNames))
 	for i := range cfOpts {
 		cfOpts[i] = grocksdb.NewDefaultOptions()
@@ -41,6 +42,13 @@ func main() {
 	// Create write options
 	wo := grocksdb.NewDefaultWriteOptions()
 	defer wo.Destroy()
+
+	// Helper function to create uint64 byte array key
+	longToBytes := func(val uint64) []byte {
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, val)
+		return buf
+	}
 
 	// Test data for different column families
 	testData := map[string]map[string]string{
@@ -97,6 +105,41 @@ func main() {
 		},
 	}
 
+	// Binary keys test data
+	binaryKeys := make(map[string]string)
+
+	// Add long integer keys (8 bytes, big-endian)
+	longKeys := []uint64{
+		123456789,            // Normal integer
+		18446744073709551615, // Max uint64
+		0,                    // Zero
+		4294967295,           // Max uint32
+		1234567890123456789,  // Large number
+	}
+
+	for _, val := range longKeys {
+		key := string(longToBytes(val))
+		binaryKeys[key] = fmt.Sprintf("Value for long key: %d", val)
+	}
+
+	// Add some mixed binary keys
+	mixedBinaryKeys := []struct {
+		key   []byte
+		value string
+	}{
+		{[]byte{0xFF, 0xAA, 0xBB, 0xCC}, "Binary key with 4 bytes"},
+		{[]byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55}, "Binary key with 6 bytes"},
+		{[]byte{0xDE, 0xAD, 0xBE, 0xEF}, "Classic binary pattern"},
+		{append([]byte("key:"), 0x00, 0xFF, 0x00), "Mixed ASCII and binary"},
+		{[]byte{0x01, 0x02, 0x03, 0x04, 0x05}, "Sequential bytes"},
+	}
+
+	for _, item := range mixedBinaryKeys {
+		binaryKeys[string(item.key)] = item.value
+	}
+
+	testData["binary_keys"] = binaryKeys
+
 	// Write data to column families
 	for cfName, kvs := range testData {
 		// Find the column family index
@@ -118,12 +161,17 @@ func main() {
 			if err != nil {
 				fmt.Printf("  Failed to write %s: %v\n", k, err)
 			} else {
+				// For binary keys, show hex representation
+				keyDisplay := k
+				if cfName == "binary_keys" {
+					keyDisplay = fmt.Sprintf("0x%x", []byte(k))
+				}
 				// Show first few characters of value for confirmation
 				displayValue := v
 				if len(displayValue) > 50 {
 					displayValue = displayValue[:47] + "..."
 				}
-				fmt.Printf("  %s: %s\n", k, displayValue)
+				fmt.Printf("  %s: %s\n", keyDisplay, displayValue)
 			}
 		}
 		fmt.Println()
@@ -134,14 +182,12 @@ func main() {
 	fmt.Println("\nTry these commands to explore the data:")
 	fmt.Println("  go run cmd/main.go --db", dbPath)
 	fmt.Println("  > listcf")
-	fmt.Println("  > usecf users")
-	fmt.Println("  > prefix user:")
-	fmt.Println("  > scan user:1001 user:1005")
-	fmt.Println("  > get user:1001 --pretty")
-	fmt.Println("\nTest nested JSON expansion with --pretty:")
-	fmt.Println("  > get user:nested1 --pretty")
-	fmt.Println("  > get user:nested2 --pretty")
-	fmt.Println("  > usecf products")
-	fmt.Println("  > get order:12345 --pretty")
-	fmt.Println("  > get order:67890 --pretty")
+	fmt.Println("  > usecf binary_keys")
+	fmt.Println("  > scan")
+	fmt.Println("  > scan * *")
+	fmt.Println("\nTest binary key formatting:")
+	fmt.Println("  > usecf binary_keys")
+	fmt.Println("  > get 0x0000000075bcd15") // Will show 123456789
+	fmt.Println("  > prefix 0x")             // Show all binary keys
+	fmt.Println("  > scan")                  // Show all entries with formatted keys
 }

@@ -313,22 +313,22 @@ func (h *Handler) Execute(input string) bool {
 				if showTimestamp {
 					if timestamp := parseTimestamp(k); timestamp != "" {
 						if opts.Values {
-							fmt.Printf("%s (%s): %s\n", k, timestamp, v)
+							fmt.Printf("%s (%s): %s\n", formatKey(k), timestamp, v)
 						} else {
-							fmt.Printf("%s (%s)\n", k, timestamp)
+							fmt.Printf("%s (%s)\n", formatKey(k), timestamp)
 						}
 					} else {
 						if opts.Values {
-							fmt.Printf("%s: %s\n", k, v)
+							fmt.Printf("%s: %s\n", formatKey(k), v)
 						} else {
-							fmt.Printf("%s\n", k)
+							fmt.Printf("%s\n", formatKey(k))
 						}
 					}
 				} else {
 					if opts.Values {
-						fmt.Printf("%s: %s\n", k, v)
+						fmt.Printf("%s: %s\n", formatKey(k), v)
 					} else {
-						fmt.Printf("%s\n", k)
+						fmt.Printf("%s\n", formatKey(k))
 					}
 				}
 			}
@@ -458,7 +458,7 @@ func (h *Handler) Execute(input string) bool {
 			for _, k := range keys {
 				v := result[k]
 				formattedValue := formatValue(v, pretty)
-				fmt.Printf("%s: %s\n", k, formattedValue)
+				fmt.Printf("%s: %s\n", formatKey(k), formattedValue)
 			}
 		}
 	case "listcf":
@@ -1171,4 +1171,37 @@ func (h *Handler) clearMemory() {
 	}
 
 	fmt.Println("✅ Conversation memory cleared successfully")
+}
+
+// formatKey attempts to format a key in a human-readable way
+func formatKey(key string) string {
+	// Try to decode as a long integer (big-endian)
+	if len(key) == 8 {
+		var val uint64
+		for i := 0; i < 8; i++ {
+			val = (val << 8) | uint64(key[i])
+		}
+		return fmt.Sprintf("%d (0x%x)", val, val)
+	}
+
+	// Check if the key is printable ASCII
+	isPrintable := true
+	for i := 0; i < len(key); i++ {
+		if key[i] < 32 || key[i] > 126 {
+			isPrintable = false
+			break
+		}
+	}
+
+	if !isPrintable {
+		// Show as hex if not printable
+		var hexStr strings.Builder
+		hexStr.WriteString("0x")
+		for i := 0; i < len(key); i++ {
+			hexStr.WriteString(fmt.Sprintf("%02x", key[i]))
+		}
+		return hexStr.String()
+	}
+
+	return key
 }
