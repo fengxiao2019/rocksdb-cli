@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -146,6 +147,14 @@ SCAN OPTIONS:
     --values=no                  Show only keys, not values
 
 For more information, visit: https://github.com/yourusername/rocksdb-cli
+
+New commands:
+    --keyformat <cf>             Show detected key format and conversion examples for a column family
+    --stats <cf>                 Show statistics for a column family (omit for database-wide stats)
+    --detailed                   Show detailed stats (use with --stats)
+    --jsonquery <cf>             Column family for JSON field query
+    --field <name>               Field name for JSON query (use with --jsonquery)
+    --value <value>              Field value for JSON query (use with --jsonquery)
 `
 
 // formatValue formats a value based on pretty flag using jsonutil
@@ -313,7 +322,7 @@ func main() {
 	exportCF := flag.String("export-cf", "", "Column family to export")
 	exportFile := flag.String("export-file", "", "Output CSV file path")
 	lastCF := flag.String("last", "", "Get last key-value pair from column family")
-	prettyFlag := flag.Bool("pretty", false, "Pretty print JSON values (use with --last)")
+	prettyFlag := flag.Bool("pretty", false, "Pretty print JSON values (use with --last, --stats, --jsonquery, etc.)")
 	watchCF := flag.String("watch", "", "Watch for new entries in column family (like ping -t)")
 	watchInterval := flag.Duration("interval", 1*time.Second, "Watch interval (default: 1s)")
 	// Scan command flags
@@ -338,6 +347,13 @@ func main() {
 	readOnlyFlag := flag.Bool("read-only", false, "Open database in read-only mode (safe for concurrent access)")
 	graphchainFlag := flag.Bool("graphchain", false, "Enable GraphChain Agent mode for natural language queries")
 	configPath := flag.String("config", "config/graphchain.yaml", "Path to GraphChain configuration file")
+	// Add new flags for keyformat and stats
+	keyformatCF := flag.String("keyformat", "", "Show detected key format and conversion examples for a column family")
+	statsFlag := flag.Bool("stats", false, "Show database-wide statistics")
+	statsCF := flag.String("stats-cf", "", "Show statistics for a specific column family (use with --stats-cf <cf>)")
+	jsonqueryCF := flag.String("jsonquery", "", "Column family for JSON field query")
+	jsonqueryField := flag.String("field", "", "Field name for JSON query (use with --jsonquery)")
+	jsonqueryValue := flag.String("value", "", "Field value for JSON query (use with --jsonquery)")
 	flag.Parse()
 
 	// Show help if requested
@@ -523,6 +539,87 @@ func main() {
 	if *graphchainFlag {
 		runGraphChainAgent(rdb, *configPath)
 		return
+	}
+
+	// After opening the DB and before starting REPL, handle new commands
+	if *keyformatCF != "" {
+		_, desc := rdb.GetKeyFormatInfo(*keyformatCF)
+		fmt.Printf("Column Family: %s\n", *keyformatCF)
+		fmt.Printf("Detected Key Format: %s\n", desc)
+		fmt.Println()
+		os.Exit(0)
+	}
+	if *statsFlag || *statsCF != "" {
+		if *statsCF == "" {
+			stats, err := rdb.GetDatabaseStats()
+			if err != nil {
+				fmt.Printf("Failed to get database stats: %v\n", err)
+				os.Exit(1)
+			}
+			// Format sample_keys and CommonPrefixes for each column family
+			for i := range stats.ColumnFamilies {
+				for j, k := range stats.ColumnFamilies[i].SampleKeys {
+					stats.ColumnFamilies[i].SampleKeys[j] = util.FormatKey(k)
+				}
+				newPrefixes := make(map[string]int64)
+				for k, v := range stats.ColumnFamilies[i].CommonPrefixes {
+					newPrefixes[util.FormatKey(k)] = v
+				}
+				stats.ColumnFamilies[i].CommonPrefixes = newPrefixes
+			}
+			if *prettyFlag {
+				data, _ := json.MarshalIndent(stats, "", "  ")
+				fmt.Println(string(data))
+			} else {
+				fmt.Printf("Database Stats: %+v\n", stats)
+			}
+		} else {
+			stats, err := rdb.GetCFStats(*statsCF)
+			if err != nil {
+				fmt.Printf("Failed to get stats for column family '%s': %v\n", *statsCF, err)
+				os.Exit(1)
+			}
+			// Format sample_keys and CommonPrefixes for this column family
+			for j, k := range stats.SampleKeys {
+				stats.SampleKeys[j] = util.FormatKey(k)
+			}
+			newPrefixes := make(map[string]int64)
+			for k, v := range stats.CommonPrefixes {
+				newPrefixes[util.FormatKey(k)] = v
+			}
+			stats.CommonPrefixes = newPrefixes
+			if *prettyFlag {
+				data, _ := json.MarshalIndent(stats, "", "  ")
+				fmt.Println(string(data))
+			} else {
+				fmt.Printf("Stats for column family '%s': %+v\n", *statsCF, stats)
+			}
+		}
+		os.Exit(0)
+	}
+	if *jsonqueryCF != "" {
+		if *jsonqueryField == "" || *jsonqueryValue == "" {
+			fmt.Println("Error: --field and --value are required for --jsonquery")
+			os.Exit(1)
+		}
+		result, err := rdb.JSONQueryCF(*jsonqueryCF, *jsonqueryField, *jsonqueryValue)
+		if err != nil {
+			fmt.Printf("JSON query failed: %v\n", err)
+			os.Exit(1)
+		}
+		if len(result) == 0 {
+			fmt.Printf("No entries found in '%s' where field '%s' = '%s'\n", *jsonqueryCF, *jsonqueryField, *jsonqueryValue)
+		} else {
+			fmt.Printf("Found %d entries in '%s' where field '%s' = '%s':\n", len(result), *jsonqueryCF, *jsonqueryField, *jsonqueryValue)
+			for k, v := range result {
+				if *prettyFlag {
+					fmt.Printf("%s: %s\n", k, jsonutil.PrettyPrintWithNestedExpansion(v))
+				} else {
+					fmt.Printf("%s: %s\n", k, v)
+				}
+			}
+		}
+		os.Exit(0)
 	}
 
 	// Start interactive REPL if no special parameters
