@@ -21,6 +21,7 @@ An interactive RocksDB command-line tool written in Go, with support for multipl
 - [JSON Features](#json-pretty-print)
 - [Generate Test Database](#generate-test-database)
 - [MCP Server Support](#mcp-server-support)
+- [Advanced Search (search tool)](#advanced-search-search-tool)
 
 ## Quick Start
 
@@ -55,6 +56,66 @@ rocksdb-cli --db /path/to/database --last users --pretty
 - **Docker support** - Easy deployment with pre-built Docker images
 - **Read-only mode** - Safe concurrent access for production environments
 - **MCP Server** - Model Context Protocol server for AI integration
+
+## Advanced Search (search tool)
+
+The `search` tool enables complex queries with multi-condition, regex, and cursor-based pagination support. This is ideal for efficiently searching large datasets with flexible criteria.
+
+### Supported Parameters
+
+```json
+{
+  "args": {
+    "key_pattern": "string",        // Optional, substring or regex for key matching
+    "value_pattern": "string",      // Optional, substring or regex for value matching
+    "column_family": "string",      // Optional, defaults to "default"
+    "limit": 100,                   // Optional, max results per page (default: 10)
+    "after": "string",              // Optional, last key from previous page (for pagination)
+    "regex": true,                  // Optional, use regex for key/value (default: false)
+    "keys_only": false              // Optional, return only keys (default: false)
+  }
+}
+```
+
+### Response Fields
+
+- **results**: Matched key-value pairs (or keys only if `keys_only` is true)
+- **count**: Number of results in this page
+- **next_cursor**: Last key in this page, use as `after` for the next page
+- **has_more**: Whether more results are available for pagination
+
+### Example Usage
+
+**Request:**
+```json
+{
+  "args": {
+    "key_pattern": "user:",
+    "value_pattern": "alice",
+    "column_family": "users",
+    "limit": 50,
+    "after": "",
+    "regex": false
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "results": {
+    "user:1001": "{\"name\":\"alice\",\"age\":30}",
+    "user:1010": "{\"name\":\"alice\",\"age\":25}"
+  },
+  "count": 2,
+  "next_cursor": "user:1010",
+  "has_more": false
+}
+```
+
+**To fetch the next page:**  Set `"after": "user:1010"` in your next request.
+
+**Tip:**  Use `regex: true` for advanced pattern matching, and `keys_only: true` if you only need the list of keys.
 
 ## GraphChain Agent (AI-Powered)
 

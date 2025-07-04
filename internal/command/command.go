@@ -734,6 +734,7 @@ func (h *Handler) Execute(input string) bool {
 				fmt.Println("  --regex               Use regex patterns (default: wildcard)")
 				fmt.Println("  --case-sensitive      Case sensitive search (default: false)")
 				fmt.Println("  --limit=N             Limit results (default: 50)")
+				fmt.Println("  --after=<key>         Start search after this key (for cursor-based pagination)")
 				fmt.Println("  --keys-only           Show only keys, not values")
 				fmt.Println("  --pretty              Pretty format JSON values")
 				fmt.Println("")
@@ -747,6 +748,8 @@ func (h *Handler) Execute(input string) bool {
 				fmt.Println("  search --key=*product* --value=*widget*  # Both key and value patterns")
 				fmt.Println("  search --key=user:[0-9]+ --regex  # Regex: keys matching 'user:' + digits")
 				fmt.Println("  search --value=error --limit=10    # First 10 entries with 'error' in value")
+				fmt.Println("  search --key=user:* --limit=100    # First 100 keys starting with 'user:'")
+				fmt.Println("  search --key=user:* --limit=100 --after=user:1100   # Next page after 'user:1100'")
 				return true
 			} else {
 				// Use current CF when only flags are provided

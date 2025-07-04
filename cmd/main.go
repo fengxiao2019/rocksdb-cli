@@ -48,6 +48,7 @@ DATA QUERY OPTIONS:
     --search-key <pattern>       Key pattern to search for (use with --search)
     --search-value <pattern>     Value pattern to search for (use with --search)
     --search-limit <N>           Limit search results (use with --search, default: 50)
+    --search-after <key>         Start search after this key (for cursor-based pagination)
     --search-regex               Use regex patterns instead of wildcards (use with --search)
     --search-case-sensitive      Case sensitive search (use with --search)
     --search-keys-only           Show only keys, not values (use with --search)
@@ -89,6 +90,10 @@ EXAMPLES:
     rocksdb-cli --db /path/to/db --search users --search-key "temp:*" --search-value "Alice"
     rocksdb-cli --db /path/to/db --search logs --search-value "Error" --search-limit 5
     rocksdb-cli --db /path/to/db --search users --search-key "user:[0-9]+" --search-regex --pretty
+    # Cursor-based pagination for large result sets
+    rocksdb-cli --db /path/to/db --search users --search-key "user" --search-limit 100
+    # Use --search-after <last_key_from_previous_page> to fetch the next page
+    rocksdb-cli --db /path/to/db --search users --search-key "user" --search-limit 100 --search-after "user:1100"
 
     # Range scanning with options
     rocksdb-cli --db /path/to/db --scan users
@@ -249,7 +254,7 @@ func executePrefix(rdb db.KeyValueDB, cf, prefix string, pretty bool) error {
 
 // executeSearch executes a search operation with the given parameters
 // This function avoids code duplication between interactive and non-interactive modes
-func executeSearch(rdb db.KeyValueDB, cf, keyPattern, valuePattern string, useRegex, caseSensitive, keysOnly bool, limit int, pretty bool) error {
+func executeSearch(rdb db.KeyValueDB, cf, keyPattern, valuePattern string, useRegex, caseSensitive, keysOnly bool, limit int, pretty bool, after string) error {
 	// Validate that at least one pattern is provided
 	if keyPattern == "" && valuePattern == "" {
 		return fmt.Errorf("must specify at least --search-key or --search-value pattern")
@@ -340,6 +345,7 @@ func main() {
 	searchKey := flag.String("search-key", "", "Key pattern to search for (use with --search)")
 	searchValue := flag.String("search-value", "", "Value pattern to search for (use with --search)")
 	searchLimit := flag.Int("search-limit", 50, "Limit search results (use with --search, default: 50)")
+	searchAfter := flag.String("search-after", "", "Start search after this key (for cursor-based pagination)")
 	searchRegex := flag.Bool("search-regex", false, "Use regex patterns instead of wildcards (use with --search)")
 	searchCaseSensitive := flag.Bool("search-case-sensitive", false, "Case sensitive search (use with --search)")
 	searchKeysOnly := flag.Bool("search-keys-only", false, "Show only keys, not values (use with --search)")
@@ -450,10 +456,9 @@ func main() {
 
 	// Handle search functionality
 	if *searchCF != "" {
-		err := executeSearch(rdb, *searchCF, *searchKey, *searchValue, *searchRegex, *searchCaseSensitive, *searchKeysOnly, *searchLimit, *prettyFlag)
+		err := executeSearch(rdb, *searchCF, *searchKey, *searchValue, *searchRegex, *searchCaseSensitive, *searchKeysOnly, *searchLimit, *prettyFlag, *searchAfter)
 		if err != nil {
 			fmt.Printf("Search failed: %v\n", err)
-			os.Exit(1)
 		}
 		return
 	}
