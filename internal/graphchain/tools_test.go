@@ -464,7 +464,7 @@ func TestCreateRocksDBTools(t *testing.T) {
 	database := setupTestDB(t)
 	tools := CreateRocksDBTools(database)
 
-	assert.Equal(t, 8, len(tools), "Should create 8 tools")
+	assert.Equal(t, 9, len(tools), "Should create 9 tools")
 
 	// Verify all tools are created
 	toolNames := make(map[string]bool)
@@ -477,10 +477,100 @@ func TestCreateRocksDBTools(t *testing.T) {
 
 	expectedTools := []string{
 		"get_value", "put_value", "scan_range", "prefix_scan",
-		"list_column_families", "get_last", "json_query", "get_stats",
+		"list_column_families", "get_last", "json_query", "get_stats", "search",
 	}
 
 	for _, expected := range expectedTools {
 		assert.True(t, toolNames[expected], "Tool %s should be created", expected)
 	}
+}
+
+func TestSearchTool(t *testing.T) {
+	database := setupTestDB(t)
+	require.NoError(t, database.CreateCF("users"))
+	tool := NewSearchTool(database)
+
+	// 准备测试数据
+	testData := map[string]string{
+		"user:1":  "alice",
+		"user:2":  "bob",
+		"user:3":  "charlie",
+		"admin:1": "root",
+		"user:10": "alice smith",
+		"user:11": "bob lee",
+	}
+	for k, v := range testData {
+		err := database.PutCF("users", k, v)
+		require.NoError(t, err)
+	}
+
+	t.Run("key contains substring", func(t *testing.T) {
+		input := `{"args": {"key_pattern": "user:1", "column_family": "users"}}`
+		result, err := tool.Call(context.Background(), input)
+		require.NoError(t, err)
+		var response map[string]interface{}
+		err = json.Unmarshal([]byte(result), &response)
+		require.NoError(t, err)
+		assert.GreaterOrEqual(t, int(response["count"].(float64)), 2)
+	})
+
+	t.Run("value contains substring", func(t *testing.T) {
+		input := `{"args": {"value_pattern": "alice", "column_family": "users"}}`
+		result, err := tool.Call(context.Background(), input)
+		require.NoError(t, err)
+		var response map[string]interface{}
+		err = json.Unmarshal([]byte(result), &response)
+		assert.GreaterOrEqual(t, int(response["count"].(float64)), 2)
+	})
+
+	t.Run("key regex match", func(t *testing.T) {
+		input := `{"args": {"key_pattern": "^user:[0-9]+$", "column_family": "users", "regex": true}}`
+		result, err := tool.Call(context.Background(), input)
+		require.NoError(t, err)
+		var response map[string]interface{}
+		err = json.Unmarshal([]byte(result), &response)
+		assert.GreaterOrEqual(t, int(response["count"].(float64)), 4)
+	})
+
+	t.Run("key and value both match", func(t *testing.T) {
+		input := `{"args": {"key_pattern": "user", "value_pattern": "bob", "column_family": "users"}}`
+		result, err := tool.Call(context.Background(), input)
+		require.NoError(t, err)
+		var response map[string]interface{}
+		err = json.Unmarshal([]byte(result), &response)
+		assert.GreaterOrEqual(t, int(response["count"].(float64)), 1)
+	})
+
+	t.Run("pagination", func(t *testing.T) {
+		input := `{"args": {"key_pattern": "user", "column_family": "users", "limit": 2}}`
+		result, err := tool.Call(context.Background(), input)
+		require.NoError(t, err)
+		var response map[string]interface{}
+		err = json.Unmarshal([]byte(result), &response)
+		assert.Equal(t, 2, int(response["count"].(float64)))
+		assert.NotEmpty(t, response["next_cursor"])
+		assert.True(t, response["has_more"].(bool))
+	})
+
+	t.Run("pagination next page", func(t *testing.T) {
+		// 先获取第一页的 next_cursor
+		input1 := `{"args": {"key_pattern": "user", "column_family": "users", "limit": 2}}`
+		result1, err := tool.Call(context.Background(), input1)
+		require.NoError(t, err)
+		var response1 map[string]interface{}
+		err = json.Unmarshal([]byte(result1), &response1)
+		nextCursor := response1["next_cursor"].(string)
+		// 用 next_cursor 获取下一页
+		input2 := `{"args": {"key_pattern": "user", "column_family": "users", "limit": 2, "after": "` + nextCursor + `"}}`
+		result2, err := tool.Call(context.Background(), input2)
+		require.NoError(t, err)
+		var response2 map[string]interface{}
+		err = json.Unmarshal([]byte(result2), &response2)
+		assert.GreaterOrEqual(t, int(response2["count"].(float64)), 1)
+	})
+
+	t.Run("tool metadata", func(t *testing.T) {
+		assert.Equal(t, "search", tool.Name())
+		assert.Contains(t, tool.Description(), "复杂搜索")
+	})
 }

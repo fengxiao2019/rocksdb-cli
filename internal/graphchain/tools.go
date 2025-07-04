@@ -452,6 +452,70 @@ Input: {} (no parameters required)
 Returns: JSON with database statistics`
 }
 
+// SearchTool implements tools.Tool interface for complex search
+type SearchTool struct {
+	db *db.DB
+}
+
+func NewSearchTool(database *db.DB) *SearchTool {
+	return &SearchTool{db: database}
+}
+
+func (t *SearchTool) Call(ctx context.Context, input string) (string, error) {
+	toolInput, err := parseToolInput(input)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse input: %w", err)
+	}
+	args := toolInput.Args
+	cf := getString(args, "column_family")
+	if cf == "" {
+		cf = "default"
+	}
+	keyPattern := getString(args, "key_pattern")
+	valuePattern := getString(args, "value_pattern")
+	useRegex := getBool(args, "regex")
+	limit := getInt(args, "limit")
+	if limit <= 0 {
+		limit = 10
+	}
+	after := getString(args, "after")
+
+	opts := db.SearchOptions{
+		KeyPattern:    keyPattern,
+		ValuePattern:  valuePattern,
+		UseRegex:      useRegex,
+		CaseSensitive: false,
+		Limit:         limit,
+		KeysOnly:      false,
+		After:         after,
+	}
+	results, err := t.db.SearchCF(cf, opts)
+	if err != nil {
+		return "", fmt.Errorf("search failed: %w", err)
+	}
+	// 组装结果
+	resultMap := make(map[string]string)
+	for _, r := range results.Results {
+		resultMap[r.Key] = r.Value
+	}
+	result := map[string]interface{}{
+		"results":     resultMap,
+		"count":       len(resultMap),
+		"next_cursor": results.NextCursor,
+		"has_more":    results.HasMore,
+	}
+	resultBytes, _ := json.Marshal(result)
+	return string(resultBytes), nil
+}
+
+func (t *SearchTool) Name() string {
+	return "search"
+}
+
+func (t *SearchTool) Description() string {
+	return `复杂搜索：支持 key/value 子串、正则、多条件、分页。\nInput: {"args": {"key_pattern": "string", "value_pattern": "string", "column_family": "string (optional)", "limit": "int (optional, default: 10)", "after": "string (optional)", "regex": "bool (optional)"}}\nReturns: JSON with results, count, next_cursor, has_more.`
+}
+
 // CreateRocksDBTools creates all RocksDB tools for the agent
 func CreateRocksDBTools(database *db.DB) []interface{} {
 	// Note: Using interface{} here because tools.Tool interface might be different
@@ -465,5 +529,6 @@ func CreateRocksDBTools(database *db.DB) []interface{} {
 		NewGetLastTool(database),
 		NewJSONQueryTool(database),
 		NewGetStatsTool(database),
+		NewSearchTool(database),
 	}
 }

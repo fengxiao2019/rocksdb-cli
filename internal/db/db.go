@@ -72,6 +72,7 @@ type SearchOptions struct {
 	CaseSensitive bool   `json:"case_sensitive"` // Whether search is case sensitive
 	Limit         int    `json:"limit"`          // Maximum number of results
 	KeysOnly      bool   `json:"keys_only"`      // Return only keys, not values
+	After         string `json:"after"`          // Cursor for pagination
 }
 
 // SearchResult contains a single search result
@@ -83,10 +84,12 @@ type SearchResult struct {
 
 // SearchResults contains search results and metadata
 type SearchResults struct {
-	Results   []SearchResult `json:"results"`
-	Total     int            `json:"total"`
-	Limited   bool           `json:"limited"`    // Whether results were limited
-	QueryTime string         `json:"query_time"` // Time taken for the search
+	Results    []SearchResult `json:"results"`
+	Total      int            `json:"total"`
+	Limited    bool           `json:"limited"`     // Whether results were limited
+	QueryTime  string         `json:"query_time"`  // Time taken for the search
+	NextCursor string         `json:"next_cursor"` // Last key in this page, or "" if no more
+	HasMore    bool           `json:"has_more"`    // True if more results exist
 }
 
 // ScanPageResult contains paginated scan results
@@ -754,17 +757,22 @@ func (d *DB) SearchCF(cf string, opts SearchOptions) (*SearchResults, error) {
 		}
 	}
 
-	// Iterate through all key-value pairs
+	// 游标分页：先跳过所有 key <= After
+	foundAfter := opts.After == ""
+	var lastKey string
 	for it.SeekToFirst(); it.Valid(); it.Next() {
-		// Check limit early to avoid unnecessary processing
-		if opts.Limit > 0 && len(results.Results) >= opts.Limit {
-			results.Limited = true
-			break
+		k := it.Key()
+		keyStr := string(k.Data())
+		if !foundAfter {
+			if keyStr > opts.After {
+				foundAfter = true
+			} else {
+				k.Free()
+				continue
+			}
 		}
 
-		k := it.Key()
 		v := it.Value()
-		keyStr := string(k.Data())
 		valueStr := string(v.Data())
 
 		var keyMatches, valueMatches bool
@@ -789,13 +797,10 @@ func (d *DB) SearchCF(cf string, opts SearchOptions) (*SearchResults, error) {
 		// Determine if this entry should be included in results
 		shouldInclude := false
 		if opts.KeyPattern != "" && opts.ValuePattern != "" {
-			// Both patterns specified - require both to match
 			shouldInclude = keyMatches && valueMatches
 		} else if opts.KeyPattern != "" {
-			// Only key pattern specified
 			shouldInclude = keyMatches
 		} else if opts.ValuePattern != "" {
-			// Only value pattern specified
 			shouldInclude = valueMatches
 		}
 
@@ -804,21 +809,27 @@ func (d *DB) SearchCF(cf string, opts SearchOptions) (*SearchResults, error) {
 				Key:           keyStr,
 				MatchedFields: matchedFields,
 			}
-
-			// Include value unless KeysOnly is specified
 			if !opts.KeysOnly {
 				result.Value = valueStr
 			}
-
 			results.Results = append(results.Results, result)
+			lastKey = keyStr
+			if opts.Limit > 0 && len(results.Results) >= opts.Limit {
+				break
+			}
 		}
-
 		k.Free()
 		v.Free()
 	}
 
 	results.Total = len(results.Results)
 	results.QueryTime = time.Since(startTime).String()
+	results.NextCursor = ""
+	results.HasMore = false
+	if opts.Limit > 0 && len(results.Results) >= opts.Limit && it.Valid() {
+		results.NextCursor = lastKey
+		results.HasMore = true
+	}
 
 	return results, nil
 }
