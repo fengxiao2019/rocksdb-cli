@@ -3,7 +3,7 @@ graphchain:
   # LLM 配置
   llm:
     provider: "ollama"     # Options: openai, ollama, anthropic
-    model: "llama2"        # Model name
+    model: "qwen2:7b"        # Model name
     api_key: ""            # API key (not needed for Ollama)
     base_url: "http://localhost:11434"  # Ollama server URL
     timeout: "30s"         # Timeout for LLM calls

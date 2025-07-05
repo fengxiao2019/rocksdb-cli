@@ -71,7 +71,7 @@ func (a *Agent) Initialize(ctx context.Context, config *Config) error {
 	// Initialize memory if enabled
 	if config.GraphChain.Agent.EnableMemory {
 		a.memory = NewConversationMemory(config.GraphChain.Agent.MemorySize)
-		a.memory.SetReturnMessages(true) // Use chat message format
+		a.memory.SetReturnMessages(false) // Use string format for LLM input
 	}
 
 	// Create database tools
@@ -83,6 +83,7 @@ func (a *Agent) Initialize(ctx context.Context, config *Config) error {
 		a.tools,
 		agents.ZeroShotReactDescription,
 		agents.WithMaxIterations(config.GraphChain.Agent.MaxIterations),
+		agents.WithReturnIntermediateSteps(),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to initialize agent executor: %w", err)
@@ -169,6 +170,19 @@ func (a *Agent) ProcessQuery(ctx context.Context, query string) (*QueryResult, e
 	var finalResult interface{} = result
 	if output, exists := result["output"]; exists {
 		finalResult = output
+	}
+
+	// Print reasoning trace if available
+	if intermediateSteps, exists := result["intermediate_steps"]; exists {
+		fmt.Println("\n=== Reasoning Trace ===")
+		if steps, ok := intermediateSteps.([]interface{}); ok {
+			for i, step := range steps {
+				fmt.Printf("Step %d: %v\n", i+1, step)
+			}
+		} else {
+			fmt.Printf("Intermediate Steps: %v\n", intermediateSteps)
+		}
+		fmt.Println("=== End Reasoning Trace ===")
 	}
 
 	// Save conversation to memory if enabled
