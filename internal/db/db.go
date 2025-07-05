@@ -117,7 +117,7 @@ type KeyValueDB interface {
 	ScanCF(cf string, start, end []byte, opts ScanOptions) (map[string]string, error)
 	ScanCFPage(cf string, start, end []byte, opts ScanOptions) (ScanPageResult, error) // new paginated version
 	GetLastCF(cf string) (string, string, error)                                       // Returns key, value, error
-	ExportToCSV(cf, filePath string) error
+	ExportToCSV(cf, filePath, sep string) error
 	JSONQueryCF(cf, field, value string) (map[string]string, error) // Query by JSON field
 	SearchCF(cf string, opts SearchOptions) (*SearchResults, error) // Fuzzy search in column family
 	ListCFs() ([]string, error)
@@ -410,7 +410,7 @@ func (d *DB) GetLastCF(cf string) (string, string, error) {
 	return string(k.Data()), string(v.Data()), nil
 }
 
-func (d *DB) ExportToCSV(cf, filePath string) error {
+func (d *DB) ExportToCSV(cf, filePath, sep string) error {
 	h, ok := d.cfHandles[cf]
 	if !ok {
 		return ErrColumnFamilyNotFound
@@ -423,6 +423,14 @@ func (d *DB) ExportToCSV(cf, filePath string) error {
 	defer file.Close()
 
 	writer := csv.NewWriter(file)
+	if sep == "" {
+		sep = ","
+	}
+	runes := []rune(sep)
+	if len(runes) != 1 {
+		return fmt.Errorf("CSV separator must be a single character, got: %q", sep)
+	}
+	writer.Comma = runes[0]
 	defer writer.Flush()
 
 	// Write CSV header

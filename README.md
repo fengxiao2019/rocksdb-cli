@@ -521,9 +521,18 @@ rocksdb-cli --db /path/to/db --scan users --keys-only
 
 #### CSV Export
 ```sh
-# Export column family to CSV
+# Export column family to CSV (default comma separator)
 rocksdb-cli --db /path/to/db --export-cf users --export-file users.csv
+
+# Use semicolon as separator
+rocksdb-cli --db /path/to/db --export-cf users --export-file users.csv --export-sep ";"
+
+# Use tab as separator (for TSV/Excel)
+rocksdb-cli --db /path/to/db --export-cf users --export-file users.tsv --export-sep "\\t"
 ```
+
+- `--export-sep <sep>` (optional): Specify CSV separator. Supports `,` (default), `;`, `\t` (tab), etc.
+- In interactive mode, you can also use: `export users users.csv --sep=";"` or `export logs logs.tsv --sep="\\t"`.
 
 #### Watch Mode (Real-time Monitoring)
 ```sh

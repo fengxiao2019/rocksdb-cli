@@ -189,7 +189,7 @@ func (m *mockDB) GetLastCF(cf string) (string, string, error) {
 	return lastKey, lastValue, nil
 }
 
-func (m *mockDB) ExportToCSV(cf, filePath string) error {
+func (m *mockDB) ExportToCSV(cf, filePath, sep string) error {
 	if !m.cfExists[cf] {
 		return db.ErrColumnFamilyNotFound
 	}

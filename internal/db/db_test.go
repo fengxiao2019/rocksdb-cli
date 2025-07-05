@@ -2,7 +2,9 @@ package db
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -424,4 +426,94 @@ func contains(slice []string, item string) bool {
 		}
 	}
 	return false
+}
+
+func TestDB_ExportToCSVWithSep(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "testdb")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer db.Close()
+
+	cf := "exportcf"
+	err = db.CreateCF(cf)
+	if err != nil {
+		t.Fatalf("CreateCF failed: %v", err)
+	}
+	// 插入测试数据
+	testData := map[string]string{
+		"k1": "v1",
+		"k2": "v2",
+		"k3": "v3",
+	}
+	for k, v := range testData {
+		err := db.PutCF(cf, k, v)
+		if err != nil {
+			t.Fatalf("PutCF failed: %v", err)
+		}
+	}
+
+	t.Run("comma separator", func(t *testing.T) {
+		csvPath := filepath.Join(dir, "out_comma.csv")
+		err := db.ExportToCSV(cf, csvPath, ",")
+		if err != nil {
+			t.Fatalf("ExportToCSV failed: %v", err)
+		}
+		data, err := os.ReadFile(csvPath)
+		if err != nil {
+			t.Fatalf("ReadFile failed: %v", err)
+		}
+		content := string(data)
+		if !(containsLine(content, "Key,Value") && containsLine(content, "k1,v1")) {
+			t.Errorf("CSV content missing expected lines: %s", content)
+		}
+	})
+
+	t.Run("semicolon separator", func(t *testing.T) {
+		csvPath := filepath.Join(dir, "out_semicolon.csv")
+		err := db.ExportToCSV(cf, csvPath, ";")
+		if err != nil {
+			t.Fatalf("ExportToCSV failed: %v", err)
+		}
+		data, err := os.ReadFile(csvPath)
+		if err != nil {
+			t.Fatalf("ReadFile failed: %v", err)
+		}
+		content := string(data)
+		if !(containsLine(content, "Key;Value") && containsLine(content, "k2;v2")) {
+			t.Errorf("CSV content missing expected lines: %s", content)
+		}
+	})
+
+	t.Run("tab separator", func(t *testing.T) {
+		csvPath := filepath.Join(dir, "out_tab.csv")
+		err := db.ExportToCSV(cf, csvPath, "\t")
+		if err != nil {
+			t.Fatalf("ExportToCSV failed: %v", err)
+		}
+		data, err := os.ReadFile(csvPath)
+		if err != nil {
+			t.Fatalf("ReadFile failed: %v", err)
+		}
+		content := string(data)
+		if !(containsLine(content, "Key\tValue") && containsLine(content, "k3\tv3")) {
+			t.Errorf("CSV content missing expected lines: %s", content)
+		}
+	})
+}
+
+// containsLine checks if content contains a line with the given substring
+func containsLine(content, substr string) bool {
+	for _, line := range splitLines(content) {
+		if line == substr {
+			return true
+		}
+	}
+	return false
+}
+
+func splitLines(s string) []string {
+	return strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
 }

@@ -415,7 +415,7 @@ func (tm *ToolManager) handleExportCSVTool(ctx context.Context, request mcp.Call
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	if err := tm.db.ExportToCSV(cf, outputFile); err != nil {
+	if err := tm.db.ExportToCSV(cf, outputFile, ","); err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Failed to export CF '%s' to '%s': %v", cf, outputFile, err)), nil
 	}
 

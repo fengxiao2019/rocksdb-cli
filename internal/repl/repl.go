@@ -118,7 +118,7 @@ func completer(d prompt.Document) []prompt.Suggest {
 		{Text: "prefix", Description: "prefix [<cf>] <prefix> [--pretty] [--smart] Query by key prefix with smart conversion"},
 		{Text: "scan", Description: "scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no] [--smart]"},
 		{Text: "last", Description: "last [<cf>] [--pretty] Get last key-value pair from CF"},
-		{Text: "export", Description: "export [<cf>] <file_path> Export CF to CSV file"},
+		{Text: "export", Description: "export [<cf>] <file_path> [--sep=<sep>] Export CF to CSV file (default separator: ,; supports --sep=\\t for tab, --sep=; for semicolon)"},
 		{Text: "jsonquery", Description: "jsonquery [<cf>] <field> <value> [--pretty] Query by JSON field value"},
 		{Text: "search", Description: "search [<cf>] [--key=pattern] [--value=pattern] Fuzzy search for keys/values"},
 		{Text: "stats", Description: "stats [<cf>] [--detailed] [--pretty] Show database/CF statistics"},

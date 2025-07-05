@@ -98,7 +98,7 @@ func (m *MockKeyValueDB) GetLastCF(cf string) (string, string, error) {
 	return "", "", db.ErrKeyNotFound
 }
 
-func (m *MockKeyValueDB) ExportToCSV(cf, filePath string) error {
+func (m *MockKeyValueDB) ExportToCSV(cf, filePath, sep string) error {
 	// Mock implementation - just return success
 	return nil
 }

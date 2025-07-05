@@ -35,7 +35,7 @@ rocksdb-cli --help
 | **Scan range** | `scan [<cf>] [start] [end]` | `scan users user:1000 user:2000` |
 | **Prefix search** | `prefix [<cf>] <prefix>` | `prefix users user:` |
 | **JSON query** | `jsonquery [<cf>] <field> <value>` | `jsonquery users name Alice` |
-| **Export CSV** | `export [<cf>] <file>` | `export users /tmp/users.csv` |
+| **Export CSV** | `export [<cf>] <file> [--sep=<sep>]` | `export users /tmp/users.csv --sep=";"` |
 
 ## Interactive Commands Reference
 
@@ -61,7 +61,13 @@ jsonquery [<cf>] <field> <value> [--pretty]  # Query JSON field
 search [<cf>] [options]                 # Fuzzy search
 
 # Utility operations
-export [<cf>] <file_path>               # Export to CSV
+export [<cf>] <file_path> [--sep=<sep>]   # Export to CSV (default separator: ,)
+                                         # Use --sep=";" for semicolon, --sep="\\t" for tab
+
+# Examples:
+export users users.csv --sep=";"
+export logs logs.tsv --sep="\\t"
+
 stats [<cf>] [--detailed] [--pretty]   # Show statistics
 help                                    # Show help
 exit/quit                               # Exit CLI

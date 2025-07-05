@@ -559,12 +559,15 @@ func (h *Handler) Execute(input string) bool {
 			cf = parts[1]
 			filePath = parts[2]
 		} else {
-			fmt.Println("Usage: export [<cf>] <file_path>")
+			fmt.Println("Usage: export [<cf>] <file_path> [--sep=<sep>]")
 			fmt.Println("  Export column family data to CSV file")
+			fmt.Println("  --sep=<sep>   CSV separator (default: ,). Supports \\t for tab, ; for semicolon, etc.")
+			fmt.Println("  Example: export users users.csv --sep=\";\"")
+			fmt.Println("           export logs logs.tsv --sep=\"\\t\"")
 			return true
 		}
 
-		err := h.DB.ExportToCSV(cf, filePath)
+		err := h.DB.ExportToCSV(cf, filePath, ",")
 		if err != nil {
 			handleError(err, "Export", cf)
 		} else {

@@ -63,6 +63,7 @@ DATA QUERY OPTIONS:
 UTILITY OPTIONS:
     --export-cf <cf>             Column family to export (use with --export-file)
     --export-file <file>         Output CSV file path for export
+    --export-sep <sep>           CSV separator (default: ,). Supports \\t for tab, ; for semicolon, etc.
     --watch <cf>                 Watch for new entries in column family (real-time)
     --interval <duration>        Watch interval (default: 1s, e.g., 500ms, 2s, 1m)
 
@@ -104,6 +105,10 @@ EXAMPLES:
     # Utility operations
     rocksdb-cli --db /path/to/db --export-cf users --export-file users.csv
     rocksdb-cli --db /path/to/db --watch logs --interval 500ms
+
+    # Export with custom separator
+    rocksdb-cli --db /path/to/db --export-cf users --export-file users.csv --export-sep ";"
+    rocksdb-cli --db /path/to/db --export-cf logs --export-file logs.tsv --export-sep "\\t"
 
 GRAPHCHAIN AGENT EXAMPLES:
     In GraphChain mode, you can ask natural language questions like:
@@ -317,6 +322,20 @@ func executeSearch(rdb db.KeyValueDB, cf, keyPattern, valuePattern string, useRe
 	return nil
 }
 
+// parseSep 解析分隔符参数，支持 \t、\n、\r 等常见转义
+func parseSep(s string) string {
+	switch s {
+	case "\\t":
+		return "\t"
+	case "\\n":
+		return "\n"
+	case "\\r":
+		return "\r"
+	default:
+		return s
+	}
+}
+
 func main() {
 	// Custom usage function
 	flag.Usage = func() {
@@ -326,6 +345,7 @@ func main() {
 	dbPath := flag.String("db", "", "Path to RocksDB database")
 	exportCF := flag.String("export-cf", "", "Column family to export")
 	exportFile := flag.String("export-file", "", "Output CSV file path")
+	exportSep := flag.String("export-sep", ",", "CSV separator (default: ,). Supports \\t for tab, ; for semicolon, etc.")
 	lastCF := flag.String("last", "", "Get last key-value pair from column family")
 	prettyFlag := flag.Bool("pretty", false, "Pretty print JSON values (use with --last, --stats, --jsonquery, etc.)")
 	watchCF := flag.String("watch", "", "Watch for new entries in column family (like ping -t)")
@@ -390,12 +410,13 @@ func main() {
 
 	// Handle export functionality
 	if *exportCF != "" && *exportFile != "" {
-		err := rdb.ExportToCSV(*exportCF, *exportFile)
+		sep := parseSep(*exportSep)
+		err := rdb.ExportToCSV(*exportCF, *exportFile, sep)
 		if err != nil {
 			fmt.Printf("Export failed: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("Successfully exported column family '%s' to '%s'\n", *exportCF, *exportFile)
+		fmt.Printf("Exported column family '%s' to %s (sep=%q)\n", *exportCF, *exportFile, sep)
 		return
 	}
 

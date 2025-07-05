@@ -183,11 +183,10 @@ func (m *mockDB) GetLastCF(cf string) (string, string, error) {
 	return lastKey, lastValue, nil
 }
 
-func (m *mockDB) ExportToCSV(cf, filePath string) error {
+func (m *mockDB) ExportToCSV(cf, filePath, sep string) error {
 	if !m.cfExists[cf] {
 		return db.ErrColumnFamilyNotFound
 	}
-
 	// For testing, we'll just simulate the export without actually creating a file
 	// In a real test environment, you might want to create a temporary file
 	return nil
