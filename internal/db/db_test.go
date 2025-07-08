@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/binary"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -690,4 +691,152 @@ func containsLine(content, substr string) bool {
 
 func splitLines(s string) []string {
 	return strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
+}
+
+func TestDB_SearchCF_NumericKeyAfterPagination(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "testdb")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer db.Close()
+
+	cf := "test_numeric_keys"
+
+	// Create column family
+	err = db.CreateCF(cf)
+	if err != nil {
+		t.Fatalf("Failed to create CF: %v", err)
+	}
+
+	// Add test data with numeric keys (8-byte uint64 big-endian)
+	numericKeys := []uint64{
+		1000,
+		2000,
+		3000,
+		4000,
+		5000,
+		10000, // This should come after 5000 in numeric order
+		20000, // But might come before in string order
+	}
+
+	for i, keyNum := range numericKeys {
+		// Convert uint64 to 8-byte big-endian binary key
+		keyBytes := make([]byte, 8)
+		binary.BigEndian.PutUint64(keyBytes, keyNum)
+		keyStr := string(keyBytes)
+
+		value := fmt.Sprintf("value%d", i)
+		err := db.PutCF(cf, keyStr, value)
+		if err != nil {
+			t.Fatalf("Failed to put numeric key %d: %v", keyNum, err)
+		}
+	}
+
+	// Test 1: Search without after parameter to establish baseline
+	opts := SearchOptions{
+		KeyPattern: "*",
+		Limit:      3,
+	}
+
+	results, err := db.SearchCF(cf, opts)
+	if err != nil {
+		t.Fatalf("Initial search failed: %v", err)
+	}
+
+	if len(results.Results) != 3 {
+		t.Fatalf("Expected 3 results in first page, got %d", len(results.Results))
+	}
+
+	t.Logf("First page keys: %v", func() []string {
+		keys := make([]string, len(results.Results))
+		for i, r := range results.Results {
+			// Format binary key as number for readability
+			if len(r.Key) == 8 {
+				val := binary.BigEndian.Uint64([]byte(r.Key))
+				keys[i] = fmt.Sprintf("%d", val)
+			} else {
+				keys[i] = r.Key
+			}
+		}
+		return keys
+	}())
+
+	// Test 2: Use string representation of a number as after parameter
+	// This should work for numeric keys - user passes "3000"
+	optsWithNumericAfter := SearchOptions{
+		KeyPattern: "*",
+		Limit:      3,
+		After:      "3000", // User passes string representation of number
+	}
+
+	numericAfterResults, err := db.SearchCF(cf, optsWithNumericAfter)
+	if err != nil {
+		t.Fatalf("Search with numeric after failed: %v", err)
+	}
+
+	t.Logf("Results after '3000': %d", len(numericAfterResults.Results))
+
+	// This is where the bug manifests - string comparison "3000" vs binary keys
+	// will not work correctly
+	if len(numericAfterResults.Results) == 0 {
+		t.Error("BUG: No results when using numeric string as after parameter for binary numeric keys")
+	}
+
+	// Test 3: Use cursor from previous search (this should work)
+	if results.HasMore {
+		optsWithCursor := SearchOptions{
+			KeyPattern: "*",
+			Limit:      3,
+			After:      results.NextCursor,
+		}
+
+		cursorResults, err := db.SearchCF(cf, optsWithCursor)
+		if err != nil {
+			t.Fatalf("Search with cursor after failed: %v", err)
+		}
+
+		t.Logf("Results with cursor: %d", len(cursorResults.Results))
+
+		// Verify no duplicate keys between pages
+		firstPageKeys := make(map[string]bool)
+		for _, result := range results.Results {
+			firstPageKeys[result.Key] = true
+		}
+
+		for _, result := range cursorResults.Results {
+			if firstPageKeys[result.Key] {
+				t.Error("Found duplicate key between pages when using cursor")
+			}
+		}
+	}
+
+	// Test 4: Verify the numeric ordering is correct
+	// Get all results and check they are in ascending numeric order
+	allOpts := SearchOptions{
+		KeyPattern: "*",
+		Limit:      100,
+	}
+
+	allResults, err := db.SearchCF(cf, allOpts)
+	if err != nil {
+		t.Fatalf("Search for all results failed: %v", err)
+	}
+
+	if len(allResults.Results) != len(numericKeys) {
+		t.Fatalf("Expected %d total results, got %d", len(numericKeys), len(allResults.Results))
+	}
+
+	// Check numeric ordering
+	var prevNum uint64 = 0
+	for i, result := range allResults.Results {
+		if len(result.Key) == 8 {
+			currentNum := binary.BigEndian.Uint64([]byte(result.Key))
+			if i > 0 && currentNum <= prevNum {
+				t.Errorf("Results not in ascending numeric order: %d <= %d at position %d", currentNum, prevNum, i)
+			}
+			prevNum = currentNum
+		}
+	}
 }

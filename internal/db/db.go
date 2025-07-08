@@ -821,12 +821,38 @@ func (d *DB) SearchCF(cf string, opts SearchOptions) (*SearchResults, error) {
 
 	// 游标分页：先跳过所有 key <= After
 	foundAfter := opts.After == ""
+	var afterKeyBytes []byte
+	var useByteComparison bool
+
+	// If After is specified, try to convert it to the appropriate binary format
+	if !foundAfter {
+		keyFormat := d.getKeyFormat(cf)
+		if keyFormat == util.KeyFormatUint64BE {
+			// For numeric keys, convert the after string to binary format
+			if convertedKey, err := util.ConvertStringToKey(opts.After, keyFormat); err == nil {
+				afterKeyBytes = convertedKey
+				useByteComparison = true
+			}
+		}
+	}
+
 	var lastKey string
 	for it.SeekToFirst(); it.Valid(); it.Next() {
 		k := it.Key()
 		keyStr := string(k.Data())
+		keyBytes := k.Data()
+
 		if !foundAfter {
-			if keyStr > opts.After {
+			var shouldSkip bool
+			if useByteComparison && afterKeyBytes != nil {
+				// Use byte comparison for numeric keys
+				shouldSkip = compareBytes(keyBytes, afterKeyBytes) <= 0
+			} else {
+				// Use string comparison for string keys or fallback
+				shouldSkip = keyStr <= opts.After
+			}
+
+			if !shouldSkip {
 				foundAfter = true
 			} else {
 				k.Free()
@@ -1262,7 +1288,11 @@ func (d *DB) ScanCFPage(cf string, start, end []byte, opts ScanOptions) (ScanPag
 		}
 	}
 
-	return ScanPageResult{Results: result, NextCursor: nextCursor, HasMore: hasMore}, nil
+	return ScanPageResult{
+		Results:    result,
+		NextCursor: nextCursor,
+		HasMore:    hasMore,
+	}, nil
 }
 
 // SmartScanCFPage: like SmartScanCF, but paginated
@@ -1283,4 +1313,32 @@ func (d *DB) SmartScanCFPage(cf string, start, end string, opts ScanOptions) (Sc
 		}
 	}
 	return d.ScanCFPage(cf, startBytes, endBytes, opts)
+}
+
+// compareBytes compares two byte slices lexicographically
+// Returns -1 if a < b, 0 if a == b, 1 if a > b
+func compareBytes(a, b []byte) int {
+	minLen := len(a)
+	if len(b) < minLen {
+		minLen = len(b)
+	}
+
+	for i := 0; i < minLen; i++ {
+		if a[i] < b[i] {
+			return -1
+		}
+		if a[i] > b[i] {
+			return 1
+		}
+	}
+
+	// If all compared bytes are equal, compare lengths
+	if len(a) < len(b) {
+		return -1
+	}
+	if len(a) > len(b) {
+		return 1
+	}
+
+	return 0
 }
