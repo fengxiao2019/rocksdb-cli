@@ -52,9 +52,11 @@ DATA QUERY OPTIONS:
     --search-regex               Use regex patterns instead of wildcards (use with --search)
     --search-case-sensitive      Case sensitive search (use with --search)
     --search-keys-only           Show only keys, not values (use with --search)
+    --search-export <file>       Export search results to CSV file (use with --search)
+    --search-export-sep <sep>    CSV separator for search export (default: ,)
     --scan <cf>                  Column family to scan
     --start <key>                Start key for scan (use with --scan, * for beginning)
-    --end <key>                  End key for scan (use with --scan, * for end)
+    --end <key>                  End key for scan (use with --scan)
     --limit <N>                  Limit number of scan results (use with --scan)
     --reverse                    Scan in reverse order (use with --scan)
     --keys-only                  Show only keys, not values (use with --scan)
@@ -95,6 +97,10 @@ EXAMPLES:
     rocksdb-cli --db /path/to/db --search users --search-key "user" --search-limit 100
     # Use --search-after <last_key_from_previous_page> to fetch the next page
     rocksdb-cli --db /path/to/db --search users --search-key "user" --search-limit 100 --search-after "user:1100"
+
+    # Export search results to CSV
+    rocksdb-cli --db /path/to/db --search users --search-key "admin" --search-export users_admin.csv
+    rocksdb-cli --db /path/to/db --search logs --search-value "error" --search-export errors.csv --search-export-sep ";"
 
     # Range scanning with options
     rocksdb-cli --db /path/to/db --scan users
@@ -259,7 +265,7 @@ func executePrefix(rdb db.KeyValueDB, cf, prefix string, pretty bool) error {
 
 // executeSearch executes a search operation with the given parameters
 // This function avoids code duplication between interactive and non-interactive modes
-func executeSearch(rdb db.KeyValueDB, cf, keyPattern, valuePattern string, useRegex, caseSensitive, keysOnly bool, limit int, pretty bool, after string) error {
+func executeSearch(rdb db.KeyValueDB, cf, keyPattern, valuePattern string, useRegex, caseSensitive, keysOnly bool, limit int, pretty bool, after, exportFile, exportSep string) error {
 	// Validate that at least one pattern is provided
 	if keyPattern == "" && valuePattern == "" {
 		return fmt.Errorf("must specify at least --search-key or --search-value pattern")
@@ -275,7 +281,21 @@ func executeSearch(rdb db.KeyValueDB, cf, keyPattern, valuePattern string, useRe
 		Limit:         limit,
 	}
 
-	// Execute search
+	// If export file is specified, export results instead of displaying them
+	if exportFile != "" {
+		// Parse export separator
+		sep := parseSep(exportSep)
+		err := rdb.ExportSearchResultsToCSV(cf, exportFile, sep, opts)
+		if err != nil {
+			return fmt.Errorf("export failed: %v", err)
+		}
+
+		// Show confirmation message
+		fmt.Printf("Search results exported to %s (sep=%q)\n", exportFile, sep)
+		return nil
+	}
+
+	// Execute search for display
 	results, err := rdb.SearchCF(cf, opts)
 	if err != nil {
 		return fmt.Errorf("search failed: %v", err)
@@ -369,6 +389,8 @@ func main() {
 	searchRegex := flag.Bool("search-regex", false, "Use regex patterns instead of wildcards (use with --search)")
 	searchCaseSensitive := flag.Bool("search-case-sensitive", false, "Case sensitive search (use with --search)")
 	searchKeysOnly := flag.Bool("search-keys-only", false, "Show only keys, not values (use with --search)")
+	searchExport := flag.String("search-export", "", "Export search results to CSV file (use with --search)")
+	searchExportSep := flag.String("search-export-sep", ",", "CSV separator for search export (default: ,)")
 	helpFlag := flag.Bool("help", false, "Show help message")
 	readOnlyFlag := flag.Bool("read-only", false, "Open database in read-only mode (safe for concurrent access)")
 	graphchainFlag := flag.Bool("graphchain", false, "Enable GraphChain Agent mode for natural language queries")
@@ -477,7 +499,7 @@ func main() {
 
 	// Handle search functionality
 	if *searchCF != "" {
-		err := executeSearch(rdb, *searchCF, *searchKey, *searchValue, *searchRegex, *searchCaseSensitive, *searchKeysOnly, *searchLimit, *prettyFlag, *searchAfter)
+		err := executeSearch(rdb, *searchCF, *searchKey, *searchValue, *searchRegex, *searchCaseSensitive, *searchKeysOnly, *searchLimit, *prettyFlag, *searchAfter, *searchExport, *searchExportSep)
 		if err != nil {
 			fmt.Printf("Search failed: %v\n", err)
 		}

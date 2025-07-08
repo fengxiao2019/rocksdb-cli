@@ -192,6 +192,19 @@ func (m *mockDB) ExportToCSV(cf, filePath, sep string) error {
 	return nil
 }
 
+func (m *mockDB) ExportSearchResultsToCSV(cf, filePath, sep string, opts db.SearchOptions) error {
+	if !m.cfExists[cf] {
+		return db.ErrColumnFamilyNotFound
+	}
+	// First perform search to validate inputs
+	_, err := m.SearchCF(cf, opts)
+	if err != nil {
+		return err
+	}
+	// For testing, we'll just simulate the export without actually creating a file
+	return nil
+}
+
 func (m *mockDB) Close() {}
 
 func (m *mockDB) IsReadOnly() bool {
@@ -1335,6 +1348,28 @@ func TestSearchCommand(t *testing.T) {
 			},
 			wantErr: false,
 			wantOut: "Found 1 matches (limited)",
+		},
+		{
+			name:  "search with export",
+			input: "search --key=user --export=users.csv",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.PutCF("default", "user:1001", "Alice")
+				db.PutCF("default", "user:1002", "Bob")
+			},
+			wantErr: false,
+			wantOut: "Search results exported to users.csv",
+		},
+		{
+			name:  "search with export and custom separator",
+			input: "search --key=user --export=users.csv --export-sep=\";\"",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.PutCF("default", "user:1001", "Alice")
+				db.PutCF("default", "user:1002", "Bob")
+			},
+			wantErr: false,
+			wantOut: "Search results exported to users.csv",
 		},
 		{
 			name:  "search both key and value patterns",

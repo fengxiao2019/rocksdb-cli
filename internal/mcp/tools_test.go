@@ -103,6 +103,19 @@ func (m *MockKeyValueDB) ExportToCSV(cf, filePath, sep string) error {
 	return nil
 }
 
+func (m *MockKeyValueDB) ExportSearchResultsToCSV(cf, filePath, sep string, opts db.SearchOptions) error {
+	if _, exists := m.data[cf]; !exists {
+		return db.ErrColumnFamilyNotFound
+	}
+	// First perform search to validate inputs
+	_, err := m.SearchCF(cf, opts)
+	if err != nil {
+		return err
+	}
+	// Mock implementation - just return success
+	return nil
+}
+
 func (m *MockKeyValueDB) JSONQueryCF(cf, field, value string) (map[string]string, error) {
 	// Mock implementation - return empty results
 	return make(map[string]string), nil

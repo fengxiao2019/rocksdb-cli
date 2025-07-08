@@ -15,6 +15,20 @@ import (
 	"time"
 )
 
+// parseSep parses separator string and handles common escape sequences
+func parseSep(s string) string {
+	switch s {
+	case "\\t":
+		return "\t"
+	case "\\n":
+		return "\n"
+	case "\\r":
+		return "\r"
+	default:
+		return s
+	}
+}
+
 type ReplState struct {
 	CurrentCF string
 }
@@ -740,6 +754,8 @@ func (h *Handler) Execute(input string) bool {
 				fmt.Println("  --after=<key>         Start search after this key (for cursor-based pagination)")
 				fmt.Println("  --keys-only           Show only keys, not values")
 				fmt.Println("  --pretty              Pretty format JSON values")
+				fmt.Println("  --export=<file>       Export results to CSV file")
+				fmt.Println("  --export-sep=<sep>    CSV separator (default: ,)")
 				fmt.Println("")
 				fmt.Println("Pattern Syntax:")
 				fmt.Println("  Wildcard: * (any chars), ? (single char)")
@@ -753,6 +769,8 @@ func (h *Handler) Execute(input string) bool {
 				fmt.Println("  search --value=error --limit=10    # First 10 entries with 'error' in value")
 				fmt.Println("  search --key=user:* --limit=100    # First 100 keys starting with 'user:'")
 				fmt.Println("  search --key=user:* --limit=100 --after=user:1100   # Next page after 'user:1100'")
+				fmt.Println("  search --key=admin --export=admins.csv              # Export admin users to CSV")
+				fmt.Println("  search --value=error --export=errors.csv --export-sep=\";\"  # Export with semicolon separator")
 				return true
 			} else {
 				// Use current CF when only flags are provided
@@ -811,6 +829,27 @@ func (h *Handler) Execute(input string) bool {
 				fmt.Println("Invalid limit value")
 				return true
 			}
+		}
+
+		// Check for export option
+		if exportFile, ok := flags["export"]; ok && exportFile != "" {
+			// Parse export separator
+			exportSep := flags["export-sep"]
+			if exportSep == "" {
+				exportSep = ","
+			}
+
+			// Convert separator string (handle escaped characters)
+			sep := parseSep(exportSep)
+
+			// Export search results
+			err := h.DB.ExportSearchResultsToCSV(cf, exportFile, sep, opts)
+			if err != nil {
+				handleError(err, "Export search results", cf, exportFile)
+			} else {
+				fmt.Printf("Search results exported to %s (sep=%q)\n", exportFile, sep)
+			}
+			return true
 		}
 
 		// Execute search

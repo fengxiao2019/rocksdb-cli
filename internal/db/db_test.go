@@ -1,9 +1,12 @@
 package db
 
 import (
+	"encoding/csv"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -502,6 +505,177 @@ func TestDB_ExportToCSVWithSep(t *testing.T) {
 			t.Errorf("CSV content missing expected lines: %s", content)
 		}
 	})
+}
+
+func TestDB_ExportSearchResultsToCSV(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "testdb")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer db.Close()
+
+	cf := "test_search_export"
+
+	// Create column family and add test data
+	err = db.CreateCF(cf)
+	if err != nil {
+		t.Fatalf("Failed to create CF: %v", err)
+	}
+
+	// Add test data
+	testData := map[string]string{
+		"user:1001":   `{"name":"Alice","type":"admin"}`,
+		"user:1002":   `{"name":"Bob","type":"user"}`,
+		"user:1003":   `{"name":"Charlie","type":"admin"}`,
+		"product:001": `{"name":"Widget","category":"tools"}`,
+		"product:002": `{"name":"Gadget","category":"electronics"}`,
+	}
+
+	for key, value := range testData {
+		err := db.PutCF(cf, key, value)
+		if err != nil {
+			t.Fatalf("Failed to put key %s: %v", key, err)
+		}
+	}
+
+	tests := []struct {
+		name        string
+		opts        SearchOptions
+		separator   string
+		wantRecords int
+		wantHeaders []string
+	}{
+		{
+			name: "export search by key pattern",
+			opts: SearchOptions{
+				KeyPattern: "user:",
+				Limit:      10,
+			},
+			separator:   ",",
+			wantRecords: 3, // 3 user records
+			wantHeaders: []string{"Key", "Value"},
+		},
+		{
+			name: "export search by value pattern",
+			opts: SearchOptions{
+				ValuePattern: "admin",
+				Limit:        10,
+			},
+			separator:   ",",
+			wantRecords: 2, // 2 admin records
+			wantHeaders: []string{"Key", "Value"},
+		},
+		{
+			name: "export keys only",
+			opts: SearchOptions{
+				KeyPattern: "product:",
+				KeysOnly:   true,
+				Limit:      10,
+			},
+			separator:   ",",
+			wantRecords: 2, // 2 product records
+			wantHeaders: []string{"Key"},
+		},
+		{
+			name: "export with semicolon separator",
+			opts: SearchOptions{
+				KeyPattern: "user:",
+				Limit:      10,
+			},
+			separator:   ";",
+			wantRecords: 3,
+			wantHeaders: []string{"Key", "Value"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			csvPath := filepath.Join(t.TempDir(), "search_export.csv")
+
+			err := db.ExportSearchResultsToCSV(cf, csvPath, tt.separator, tt.opts)
+			if err != nil {
+				t.Fatalf("ExportSearchResultsToCSV failed: %v", err)
+			}
+
+			// Verify the exported file
+			file, err := os.Open(csvPath)
+			if err != nil {
+				t.Fatalf("Failed to open exported file: %v", err)
+			}
+			defer file.Close()
+
+			reader := csv.NewReader(file)
+			if tt.separator != "" {
+				reader.Comma = rune(tt.separator[0])
+			}
+
+			records, err := reader.ReadAll()
+			if err != nil {
+				t.Fatalf("Failed to read CSV: %v", err)
+			}
+
+			// Check header
+			if len(records) == 0 {
+				t.Fatal("No records found in CSV")
+			}
+
+			if !reflect.DeepEqual(records[0], tt.wantHeaders) {
+				t.Errorf("Expected headers %v, got %v", tt.wantHeaders, records[0])
+			}
+
+			// Check number of data records (excluding header)
+			if len(records)-1 != tt.wantRecords {
+				t.Errorf("Expected %d data records, got %d", tt.wantRecords, len(records)-1)
+			}
+
+			// Verify content structure
+			for i := 1; i < len(records); i++ {
+				record := records[i]
+				if tt.opts.KeysOnly {
+					if len(record) != 1 {
+						t.Errorf("Keys-only record should have 1 field, got %d", len(record))
+					}
+				} else {
+					if len(record) != 2 {
+						t.Errorf("Full record should have 2 fields, got %d", len(record))
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDB_ExportSearchResultsToCSV_Errors(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "testdb")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer db.Close()
+
+	// Test with non-existent column family
+	csvPath := filepath.Join(t.TempDir(), "error_test.csv")
+	opts := SearchOptions{KeyPattern: "test"}
+
+	err = db.ExportSearchResultsToCSV("non_existent_cf", csvPath, ",", opts)
+	if !errors.Is(err, ErrColumnFamilyNotFound) {
+		t.Errorf("Expected ErrColumnFamilyNotFound, got: %v", err)
+	}
+
+	// Test with invalid separator
+	cf := "test_cf"
+	err = db.CreateCF(cf)
+	if err != nil {
+		t.Fatalf("Failed to create CF: %v", err)
+	}
+
+	err = db.ExportSearchResultsToCSV(cf, csvPath, "invalid_sep", opts)
+	if err == nil || !strings.Contains(err.Error(), "CSV separator must be a single character") {
+		t.Errorf("Expected separator error, got: %v", err)
+	}
 }
 
 // containsLine checks if content contains a line with the given substring

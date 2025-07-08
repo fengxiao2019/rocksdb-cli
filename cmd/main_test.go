@@ -196,6 +196,19 @@ func (m *mockDB) ExportToCSV(cf, filePath, sep string) error {
 	return nil
 }
 
+func (m *mockDB) ExportSearchResultsToCSV(cf, filePath, sep string, opts db.SearchOptions) error {
+	if !m.cfExists[cf] {
+		return db.ErrColumnFamilyNotFound
+	}
+	// First perform search to validate inputs
+	_, err := m.SearchCF(cf, opts)
+	if err != nil {
+		return err
+	}
+	// For testing, simulate the export without actually creating a file
+	return nil
+}
+
 func (m *mockDB) Close() {}
 
 func (m *mockDB) IsReadOnly() bool {

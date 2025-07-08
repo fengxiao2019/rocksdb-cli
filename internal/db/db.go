@@ -118,8 +118,9 @@ type KeyValueDB interface {
 	ScanCFPage(cf string, start, end []byte, opts ScanOptions) (ScanPageResult, error) // new paginated version
 	GetLastCF(cf string) (string, string, error)                                       // Returns key, value, error
 	ExportToCSV(cf, filePath, sep string) error
-	JSONQueryCF(cf, field, value string) (map[string]string, error) // Query by JSON field
-	SearchCF(cf string, opts SearchOptions) (*SearchResults, error) // Fuzzy search in column family
+	JSONQueryCF(cf, field, value string) (map[string]string, error)              // Query by JSON field
+	SearchCF(cf string, opts SearchOptions) (*SearchResults, error)              // Fuzzy search in column family
+	ExportSearchResultsToCSV(cf, filePath, sep string, opts SearchOptions) error // Export search results to CSV
 	ListCFs() ([]string, error)
 	CreateCF(cf string) error
 	DropCF(cf string) error
@@ -455,6 +456,59 @@ func (d *DB) ExportToCSV(cf, filePath, sep string) error {
 
 		k.Free()
 		v.Free()
+	}
+
+	return nil
+}
+
+// ExportSearchResultsToCSV exports search results to a CSV file
+func (d *DB) ExportSearchResultsToCSV(cf, filePath, sep string, opts SearchOptions) error {
+	// First, perform the search to get results
+	results, err := d.SearchCF(cf, opts)
+	if err != nil {
+		return fmt.Errorf("search failed: %w", err)
+	}
+
+	file, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	writer := csv.NewWriter(file)
+	if sep == "" {
+		sep = ","
+	}
+	runes := []rune(sep)
+	if len(runes) != 1 {
+		return fmt.Errorf("CSV separator must be a single character, got: %q", sep)
+	}
+	writer.Comma = runes[0]
+	defer writer.Flush()
+
+	// Write CSV header
+	if opts.KeysOnly {
+		err = writer.Write([]string{"Key"})
+	} else {
+		err = writer.Write([]string{"Key", "Value"})
+	}
+	if err != nil {
+		return err
+	}
+
+	// Write search results
+	for _, result := range results.Results {
+		if opts.KeysOnly {
+			err := writer.Write([]string{util.FormatKey(result.Key)})
+			if err != nil {
+				return err
+			}
+		} else {
+			err := writer.Write([]string{util.FormatKey(result.Key), result.Value})
+			if err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil

@@ -72,7 +72,9 @@ The `search` tool enables complex queries with multi-condition, regex, and curso
     "limit": 100,                   // Optional, max results per page (default: 10)
     "after": "string",              // Optional, last key from previous page (for pagination)
     "regex": true,                  // Optional, use regex for key/value (default: false)
-    "keys_only": false              // Optional, return only keys (default: false)
+    "keys_only": false,             // Optional, return only keys (default: false)
+    "export_file": "string",        // Optional, export results to CSV file
+    "export_sep": "string"          // Optional, CSV separator (default: ",")
   }
 }
 ```
@@ -534,6 +536,19 @@ rocksdb-cli --db /path/to/db --export-cf users --export-file users.tsv --export-
 - `--export-sep <sep>` (optional): Specify CSV separator. Supports `,` (default), `;`, `\t` (tab), etc.
 - In interactive mode, you can also use: `export users users.csv --sep=";"` or `export logs logs.tsv --sep="\\t"`.
 
+#### Search and Export
+```sh
+# Search and export results to CSV
+rocksdb-cli --db /path/to/db --search users --search-key "admin" --search-export users_admin.csv
+rocksdb-cli --db /path/to/db --search logs --search-value "error" --search-export errors.csv --search-export-sep ";"
+
+# Export only keys (no values)
+rocksdb-cli --db /path/to/db --search products --search-key "prod:" --search-keys-only --search-export products_keys.csv
+
+# Search with multiple patterns and export
+rocksdb-cli --db /path/to/db --search users --search-key "user:" --search-value "admin" --search-export admin_users.csv
+```
+
 #### Watch Mode (Real-time Monitoring)
 ```sh
 # Monitor column family for new entries
@@ -562,7 +577,8 @@ last [<cf>] [--pretty]       # Get last key-value pair from CF
 # Advanced operations
 scan [<cf>] [start] [end] [options]  # Scan range with options
 jsonquery [<cf>] <field> <value> [--pretty]  # Query by JSON field value
-export [<cf>] <file_path>    # Export CF to CSV file
+search [<cf>] [options]             # Fuzzy search with export support
+export [<cf>] <file_path>           # Export CF to CSV file
 
 # Help and exit
 help                         # Show interactive help
@@ -707,6 +723,7 @@ rocksdb-cli --db ./testdb
 > jsonquery users age 25    # Find users aged 25
 > scan user:1001 user:1005  # Scan range of users
 > export users users.csv    # Export to CSV
+> search --key=admin --export=admins.csv  # Search and export admin users
 > usecf logs               # Switch to logs
 > prefix error:             # Get all error logs starting with "error:"
 > jsonquery level ERROR     # Find error logs by JSON field
