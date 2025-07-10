@@ -111,24 +111,6 @@ func fixWSLTerminal() {
 }
 
 func completer(d prompt.Document) []prompt.Suggest {
-	s := []prompt.Suggest{
-		{Text: "usecf", Description: "usecf <cf> Switch current column family"},
-		{Text: "get", Description: "get [<cf>] <key> [--pretty] [--smart] Query by key with smart conversion"},
-		{Text: "put", Description: "put [<cf>] <key> <value> Insert/Update (disabled in read-only)"},
-		{Text: "prefix", Description: "prefix [<cf>] <prefix> [--pretty] [--smart] Query by key prefix with smart conversion"},
-		{Text: "scan", Description: "scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no] [--smart]"},
-		{Text: "last", Description: "last [<cf>] [--pretty] Get last key-value pair from CF"},
-		{Text: "export", Description: "export [<cf>] <file_path> [--sep=<sep>] Export CF to CSV file (default separator: ,; supports --sep=\\t for tab, --sep=; for semicolon)"},
-		{Text: "jsonquery", Description: "jsonquery [<cf>] <field> <value> [--pretty] Query by JSON field value"},
-		{Text: "search", Description: "search [<cf>] [--key=pattern] [--value=pattern] Fuzzy search for keys/values"},
-		{Text: "stats", Description: "stats [<cf>] [--detailed] [--pretty] Show database/CF statistics"},
-		{Text: "keyformat", Description: "keyformat [<cf>] Show detected key format and conversion examples"},
-		{Text: "listcf", Description: "List all column families"},
-		{Text: "createcf", Description: "createcf <cf> Create new column family (disabled in read-only)"},
-		{Text: "dropcf", Description: "dropcf <cf> Drop column family (disabled in read-only)"},
-		{Text: "help", Description: "Show help with all available commands"},
-		{Text: "exit", Description: "Exit"},
-		{Text: "quit", Description: "Exit"},
-	}
+	s := []prompt.Suggest{}
 	return prompt.FilterHasPrefix(s, d.GetWordBeforeCursor(), true)
 }
