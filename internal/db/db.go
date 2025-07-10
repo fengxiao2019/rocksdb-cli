@@ -14,6 +14,8 @@ import (
 
 	"rocksdb-cli/internal/util"
 
+	"encoding/binary"
+
 	"github.com/linxGnu/grocksdb"
 )
 
@@ -73,6 +75,7 @@ type SearchOptions struct {
 	Limit         int    `json:"limit"`          // Maximum number of results
 	KeysOnly      bool   `json:"keys_only"`      // Return only keys, not values
 	After         string `json:"after"`          // Cursor for pagination
+	Tick          bool   `json:"tick"`           // Whether to treat keys as .NET tick times and convert to UTC string
 }
 
 // SearchResult contains a single search result
@@ -893,8 +896,14 @@ func (d *DB) SearchCF(cf string, opts SearchOptions) (*SearchResults, error) {
 		}
 
 		if shouldInclude {
+			displayKey := keyStr
+			if opts.Tick {
+				// Convert key to UTC time string if Tick option is enabled
+				displayKey = convertTickTimeToUTC(keyStr)
+			}
+
 			result := SearchResult{
-				Key:           keyStr,
+				Key:           displayKey,
 				MatchedFields: matchedFields,
 			}
 			if !opts.KeysOnly {
@@ -1341,4 +1350,96 @@ func compareBytes(a, b []byte) int {
 	}
 
 	return 0
+}
+
+// convertTickTimeToUTC converts a key that represents a .NET tick time to UTC string
+// In .NET, 1 tick = 100 nanoseconds, and 1 second = 10,000,000 ticks
+func convertTickTimeToUTC(key string) string {
+	// Try to parse as a number (.NET ticks)
+	if ticks, err := strconv.ParseInt(key, 10, 64); err == nil {
+		// .NET ticks: 1 tick = 100 nanoseconds, 1 second = 10,000,000 ticks
+		const ticksPerSecond = 10000000 // 10^7
+
+		// Check if this looks like a reasonable .NET tick value
+		// .NET DateTime.Ticks from year 1 to year 9999 would be in this range
+		// But we'll focus on modern timestamps (after 1970)
+		minTicks := int64(621355968000000000)  // 1970-01-01 00:00:00 UTC in .NET ticks
+		maxTicks := int64(3155378975999999999) // 9999-12-31 23:59:59 UTC in .NET ticks
+
+		if ticks >= minTicks && ticks <= maxTicks {
+			// Convert .NET ticks to Unix timestamp
+			// .NET epoch is 0001-01-01, Unix epoch is 1970-01-01
+			// The difference is 621355968000000000 ticks
+			unixTicks := ticks - minTicks
+			seconds := unixTicks / ticksPerSecond
+			nanoseconds := (unixTicks % ticksPerSecond) * 100 // Each tick is 100 nanoseconds
+
+			t := time.Unix(seconds, nanoseconds)
+			return t.UTC().Format("2006-01-02 15:04:05.000000 UTC")
+		}
+
+		// If not in the valid .NET tick range, try as a simpler timestamp
+		// Could be ticks since Unix epoch
+		if ticks > ticksPerSecond { // At least 1 second worth of ticks
+			seconds := ticks / ticksPerSecond
+			nanoseconds := (ticks % ticksPerSecond) * 100
+
+			// Check if this gives us a reasonable date (after 1970)
+			if seconds > 0 && seconds < 4102444800 { // Before year 2100
+				t := time.Unix(seconds, nanoseconds)
+				return t.UTC().Format("2006-01-02 15:04:05.000000 UTC")
+			}
+		}
+
+		// Not a valid tick timestamp, return original key
+		return key
+	}
+
+	// If it's binary data, try to interpret as binary .NET ticks
+	keyBytes := []byte(key)
+
+	// Try 8-byte big-endian .NET ticks (common in .NET serialization)
+	if len(keyBytes) == 8 {
+		ticks := int64(binary.BigEndian.Uint64(keyBytes))
+		if ticks > 0 {
+			const ticksPerSecond = 10000000 // 10^7
+
+			// Check for .NET DateTime.Ticks format
+			minTicks := int64(621355968000000000)  // 1970-01-01 00:00:00 UTC in .NET ticks
+			maxTicks := int64(3155378975999999999) // 9999-12-31 23:59:59 UTC in .NET ticks
+
+			if ticks >= minTicks && ticks <= maxTicks {
+				// Convert .NET ticks to Unix timestamp
+				unixTicks := ticks - minTicks
+				seconds := unixTicks / ticksPerSecond
+				nanoseconds := (unixTicks % ticksPerSecond) * 100
+
+				t := time.Unix(seconds, nanoseconds)
+				return t.UTC().Format("2006-01-02 15:04:05.000000 UTC")
+			}
+
+			// Try as ticks since Unix epoch
+			if ticks > ticksPerSecond {
+				seconds := ticks / ticksPerSecond
+				nanoseconds := (ticks % ticksPerSecond) * 100
+
+				if seconds > 0 && seconds < 4102444800 { // Before year 2100
+					t := time.Unix(seconds, nanoseconds)
+					return t.UTC().Format("2006-01-02 15:04:05.000000 UTC")
+				}
+			}
+		}
+	}
+
+	// Try 4-byte big-endian as seconds (fallback for non-tick data)
+	if len(keyBytes) == 4 {
+		seconds := int64(binary.BigEndian.Uint32(keyBytes))
+		if seconds > 1e8 { // Reasonable timestamp range (> ~1973)
+			t := time.Unix(seconds, 0)
+			return t.UTC().Format("2006-01-02 15:04:05.000000 UTC")
+		}
+	}
+
+	// If all parsing attempts fail, return original key
+	return key
 }

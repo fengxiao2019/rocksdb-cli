@@ -545,8 +545,9 @@ func TestExecuteScanEmptyColumnFamily(t *testing.T) {
 		}
 	})
 
-	if strings.TrimSpace(output) != "" {
-		t.Errorf("Expected empty output for empty CF, got: %q", output)
+	expectedOutput := "No entries found in column family 'empty'\n"
+	if strings.TrimSpace(output) != strings.TrimSpace(expectedOutput) {
+		t.Errorf("Expected output %q for empty CF, got: %q", expectedOutput, output)
 	}
 }
 

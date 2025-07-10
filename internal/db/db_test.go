@@ -840,3 +840,202 @@ func TestDB_SearchCF_NumericKeyAfterPagination(t *testing.T) {
 		}
 	}
 }
+
+func TestDB_SearchCF_TickTimeConversion(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "testdb")
+	db, err := Open(dbPath)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer db.Close()
+
+	cf := "test_tick_time"
+
+	// Create column family
+	err = db.CreateCF(cf)
+	if err != nil {
+		t.Fatalf("Failed to create CF: %v", err)
+	}
+
+	// Test data with .NET tick formats
+	testData := map[string]string{
+		"637450560000000000": "New Year 2021 (.NET ticks)", // 2021-01-01 00:00:00 UTC in .NET ticks
+		"637765920000000000": "New Year 2022 (.NET ticks)", // 2022-01-01 00:00:00 UTC in .NET ticks
+		"16094592000000000":  "Unix epoch ticks",           // Ticks since Unix epoch
+		"invalidkey":         "Non-timestamp key",          // Should remain unchanged
+		"123":                "Too small number",           // Should remain unchanged
+	}
+
+	// Add test data
+	for key, value := range testData {
+		err := db.PutCF(cf, key, value)
+		if err != nil {
+			t.Fatalf("Failed to put key %s: %v", key, err)
+		}
+	}
+
+	// Add binary .NET tick test (8-byte big-endian)
+	binaryKey := make([]byte, 8)
+	binary.BigEndian.PutUint64(binaryKey, 637450560000000000) // 2021-01-01 00:00:00 UTC in .NET ticks
+	err = db.PutCF(cf, string(binaryKey), "Binary .NET tick test")
+	if err != nil {
+		t.Fatalf("Failed to put binary key: %v", err)
+	}
+
+	tests := []struct {
+		name           string
+		opts           SearchOptions
+		expectedKeys   []string
+		expectedValues []string
+	}{
+		{
+			name: "search without tick option",
+			opts: SearchOptions{
+				KeyPattern: "*",
+				Limit:      10,
+				Tick:       false,
+			},
+			expectedKeys: []string{
+				"637450560000000000",
+				"637765920000000000",
+				"16094592000000000",
+				"invalidkey",
+				"123",
+				string(binaryKey), // Binary key should remain as-is
+			},
+		},
+		{
+			name: "search with tick option enabled",
+			opts: SearchOptions{
+				KeyPattern: "*",
+				Limit:      10,
+				Tick:       true,
+			},
+			expectedKeys: []string{
+				"2021-01-01 00:00:00.000000 UTC", // 1609459200 converted
+				"2021-01-01 00:00:00.000000 UTC", // 1609459200000 converted
+				"2022-01-01 00:00:00.000000 UTC", // 1640995200 converted
+				"invalidkey",                     // Should remain unchanged
+				"123",                            // Should remain unchanged
+				"2021-01-01 00:00:00.000000 UTC", // Binary timestamp converted
+			},
+		},
+		{
+			name: "search specific pattern with tick option",
+			opts: SearchOptions{
+				KeyPattern: "637450560000000000*",
+				Limit:      10,
+				Tick:       true,
+			},
+			expectedKeys: []string{
+				"2021-01-01 00:00:00.000000 UTC", // 637450560000000000 converted
+			},
+		},
+		{
+			name: "keys only with tick option",
+			opts: SearchOptions{
+				KeyPattern: "*",
+				Limit:      10,
+				Tick:       true,
+				KeysOnly:   true,
+			},
+			expectedKeys: []string{
+				"2021-01-01 00:00:00.000000 UTC",
+				"2021-01-01 00:00:00.000000 UTC",
+				"2022-01-01 00:00:00.000000 UTC",
+				"invalidkey",
+				"123",
+				"2021-01-01 00:00:00.000000 UTC",
+			},
+			expectedValues: []string{"", "", "", "", "", ""}, // Empty values for keys-only
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			results, err := db.SearchCF(cf, tt.opts)
+			if err != nil {
+				t.Fatalf("SearchCF failed: %v", err)
+			}
+
+			if len(results.Results) == 0 {
+				t.Fatal("No results returned")
+			}
+
+			// Check that at least some expected keys are found
+			foundKeys := make([]string, len(results.Results))
+			foundValues := make([]string, len(results.Results))
+
+			for i, result := range results.Results {
+				foundKeys[i] = result.Key
+				foundValues[i] = result.Value
+			}
+
+			t.Logf("Found keys: %v", foundKeys)
+
+			// Verify specific conversions for timestamp keys
+			if tt.opts.Tick {
+				for _, result := range results.Results {
+					if strings.Contains(result.Key, "UTC") {
+						// This should be a converted timestamp
+						if !strings.HasSuffix(result.Key, "UTC") {
+							t.Errorf("Converted timestamp should end with UTC: %s", result.Key)
+						}
+						if !strings.Contains(result.Key, "-") || !strings.Contains(result.Key, ":") {
+							t.Errorf("Converted timestamp should contain date and time separators: %s", result.Key)
+						}
+					}
+				}
+			}
+
+			// For keys-only option, verify values are empty
+			if tt.opts.KeysOnly {
+				for _, result := range results.Results {
+					if result.Value != "" {
+						t.Errorf("Keys-only option should return empty values, got: %s", result.Value)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestConvertTickTimeToUTC(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{
+			input:    "637450560000000000", // 2021-01-01 00:00:00 UTC (.NET ticks)
+			expected: "2021-01-01 00:00:00.000000 UTC",
+		},
+		{
+			input:    "637765920000000000", // 2022-01-01 00:00:00 UTC (.NET ticks)
+			expected: "2022-01-01 00:00:00.000000 UTC",
+		},
+		{
+			input:    "16094592000000000", // Unix epoch ticks (simple format)
+			expected: "2021-01-01 00:00:00.000000 UTC",
+		},
+		{
+			input:    "invalidkey",
+			expected: "invalidkey", // Should remain unchanged
+		},
+		{
+			input:    "123",
+			expected: "123", // Too small, should remain unchanged
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := convertTickTimeToUTC(tt.input)
+			t.Logf("Input: %s, Expected: %s, Got: %s", tt.input, tt.expected, result)
+
+			if result != tt.expected {
+				t.Errorf("convertTickTimeToUTC(%s) = %s, want %s", tt.input, result, tt.expected)
+			}
+		})
+	}
+}

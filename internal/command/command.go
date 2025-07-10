@@ -753,6 +753,7 @@ func (h *Handler) Execute(input string) bool {
 				fmt.Println("  --limit=N             Limit results (default: 50)")
 				fmt.Println("  --after=<key>         Start search after this key (for cursor-based pagination)")
 				fmt.Println("  --keys-only           Show only keys, not values")
+				fmt.Println("  --tick                Treat keys as .NET tick times and convert to UTC string format")
 				fmt.Println("  --pretty              Pretty format JSON values")
 				fmt.Println("  --export=<file>       Export results to CSV file")
 				fmt.Println("  --export-sep=<sep>    CSV separator (default: ,)")
@@ -769,6 +770,7 @@ func (h *Handler) Execute(input string) bool {
 				fmt.Println("  search --value=error --limit=10    # First 10 entries with 'error' in value")
 				fmt.Println("  search --key=user:* --limit=100    # First 100 keys starting with 'user:'")
 				fmt.Println("  search --key=user:* --limit=100 --after=user:1100   # Next page after 'user:1100'")
+				fmt.Println("  search --key=* --tick                               # Show all keys as converted .NET tick times")
 				fmt.Println("  search --key=admin --export=admins.csv              # Export admin users to CSV")
 				fmt.Println("  search --value=error --export=errors.csv --export-sep=\";\"  # Export with semicolon separator")
 				return true
@@ -818,6 +820,7 @@ func (h *Handler) Execute(input string) bool {
 			UseRegex:      flags["regex"] == "true",
 			CaseSensitive: flags["case-sensitive"] == "true",
 			KeysOnly:      flags["keys-only"] == "true",
+			Tick:          flags["tick"] == "true",
 			Limit:         50, // Default limit
 		}
 
