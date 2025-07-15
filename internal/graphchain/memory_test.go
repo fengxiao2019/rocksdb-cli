@@ -260,3 +260,45 @@ func TestExtractStringFromMap(t *testing.T) {
 	result = extractStringFromMap(testMap, "missing1", "missing2")
 	assert.Equal(t, "", result)
 }
+
+func TestConversationMemory_GetHistoryByTokenLimit(t *testing.T) {
+	memory := NewConversationMemory(10)
+	ctx := context.Background()
+
+	// 假设每个问答大约10 token，实际实现会用 token 估算工具
+	for i := 1; i <= 5; i++ {
+		inputs := map[string]any{"input": fmt.Sprintf("问题%d", i)}
+		outputs := map[string]any{"output": fmt.Sprintf("回答%d", i)}
+		err := memory.SaveContext(ctx, inputs, outputs)
+		require.NoError(t, err)
+	}
+
+	// 设定 token limit = 25，只能保留最近2-3轮
+	historyStr := memory.GetHistoryByTokenLimit(25, "test-model")
+	// 断言输出不超过25 token（假设每轮约10 token）
+	tokenCount := EstimateTokenCount(historyStr, "test-model")
+	assert.LessOrEqual(t, tokenCount, 25)
+	// 断言内容为最近的问答
+	assert.Contains(t, historyStr, "问题5")
+	assert.Contains(t, historyStr, "回答5")
+}
+
+func TestConversationMemory_SummarizeHistory(t *testing.T) {
+	memory := NewConversationMemory(10)
+	ctx := context.Background()
+
+	for i := 1; i <= 5; i++ {
+		inputs := map[string]any{"input": fmt.Sprintf("问题%d", i)}
+		outputs := map[string]any{"output": fmt.Sprintf("回答%d", i)}
+		err := memory.SaveContext(ctx, inputs, outputs)
+		require.NoError(t, err)
+	}
+
+	historyStr := memory.getFormattedHistory()
+	summary := SummarizeHistory(historyStr, "test-model")
+	// 断言摘要比原始内容短
+	assert.Less(t, len(summary), len(historyStr))
+	// 断言摘要包含关键信息
+	assert.Contains(t, summary, "问题")
+	assert.Contains(t, summary, "回答")
+}

@@ -2,6 +2,7 @@ package graphchain
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tmc/langchaingo/agents"
+	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/llms/fake"
 )
 
@@ -463,5 +465,68 @@ func TestAgent_ContextCancellation(t *testing.T) {
 		assert.Contains(t, err.Error(), "context")
 	} else {
 		assert.NotNil(t, result)
+	}
+}
+
+func TestAgent_BuildSmallModelPrompt_TokenLimit(t *testing.T) {
+	database := newTestDB(t)
+	dbPtr, ok := database.(*db.DB)
+	require.True(t, ok)
+
+	agent := NewAgent(dbPtr)
+	config := newTestConfig()
+	agent.config = config
+
+	// 构造多轮历史
+	memory := NewConversationMemory(10)
+	for i := 1; i <= 5; i++ {
+		inputs := map[string]any{"input": fmt.Sprintf("问题%d", i)}
+		outputs := map[string]any{"output": fmt.Sprintf("回答%d", i)}
+		_ = memory.SaveContext(context.Background(), inputs, outputs)
+	}
+	agent.memory = memory
+
+	query := "请统计所有用户数量"
+	tokenLimit := 30
+
+	// 构建小模型prompt（假设实现为 BuildSmallModelPrompt）
+	prompt := agent.BuildSmallModelPrompt(query, tokenLimit, "test-model")
+	tokenCount := EstimateTokenCount(prompt, "test-model")
+	assert.LessOrEqual(t, tokenCount, tokenLimit)
+	assert.Contains(t, prompt, "请统计所有用户数量")
+	// 断言历史被裁剪或摘要
+	assert.Contains(t, prompt, "Human:")
+	assert.Contains(t, prompt, "Assistant:")
+}
+
+type mockExecutor struct{}
+
+func (m *mockExecutor) Call(ctx context.Context, inputs map[string]any, opts ...chains.ChainCallOption) (map[string]any, error) {
+	return map[string]any{"output": "Processed: get all keys from users"}, nil
+}
+
+// 兼容 agents.Executor 其他方法（如有需要可补充空实现）
+
+func TestAgent_ProcessQuery_NoTokenization(t *testing.T) {
+	database := newTestDB(t)
+	dbPtr, ok := database.(*db.DB)
+	require.True(t, ok)
+
+	agent := NewAgent(dbPtr)
+	config := newTestConfig()
+	agent.config = config
+
+	// 使用 mockExecutor 替换 agent.executor
+	agent.executor = &mockExecutor{}
+
+	ctx := context.Background()
+	result, err := agent.ProcessQuery(ctx, "get all keys from users")
+
+	assert.NoError(t, err)
+	assert.NotNil(t, result)
+	if str, ok := result.Data.(string); ok {
+		assert.Contains(t, str, "get all keys from users")
+	} else {
+		t.Fatalf("result.Data is not a string, got: %T", result.Data)
 	}
 }

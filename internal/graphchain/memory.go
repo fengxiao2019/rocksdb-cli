@@ -4,6 +4,7 @@ package graphchain
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -258,4 +259,69 @@ func (cm *ConversationMemory) AddCustomTurn(userQuery, agentResponse string, tim
 	if len(cm.history) > cm.maxSize {
 		cm.history = cm.history[len(cm.history)-cm.maxSize:]
 	}
+}
+
+// EstimateTokenCount estimates the number of tokens in the text (simple implementation, can use model API in practice)
+func EstimateTokenCount(text string, model string) int {
+	// Roughly estimate: 1 token per 4 characters
+	return (len([]rune(text)) + 3) / 4
+}
+
+// GetHistoryByTokenLimit returns a history string not exceeding the token limit (accumulating from the most recent turn)
+func (cm *ConversationMemory) GetHistoryByTokenLimit(tokenLimit int, model string) string {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+
+	totalTokens := 0
+	selected := make([]ConversationTurn, 0, len(cm.history))
+	// Accumulate from the last turn backwards
+	for i := len(cm.history) - 1; i >= 0; i-- {
+		turn := cm.history[i]
+		turnStr := ""
+		if turn.UserQuery != "" {
+			turnStr += "Human: " + turn.UserQuery + "\n"
+		}
+		if turn.AgentResponse != "" {
+			turnStr += "Assistant: " + turn.AgentResponse
+		}
+		tokens := EstimateTokenCount(turnStr, model)
+		if totalTokens+tokens > tokenLimit {
+			break
+		}
+		totalTokens += tokens
+		selected = append([]ConversationTurn{turn}, selected...)
+	}
+	// Concatenate as string
+	var formatted string
+	for i, turn := range selected {
+		if i > 0 {
+			formatted += "\n\n"
+		}
+		if turn.UserQuery != "" {
+			formatted += "Human: " + turn.UserQuery
+		}
+		if turn.AgentResponse != "" {
+			if turn.UserQuery != "" {
+				formatted += "\n"
+			}
+			formatted += "Assistant: " + turn.AgentResponse
+		}
+	}
+	return formatted
+}
+
+// SummarizeHistory summarizes the history content (simple implementation, can use LLM summarization in practice)
+func SummarizeHistory(history string, model string) string {
+	// Simple rule: keep only the first question and answer of each round
+	lines := strings.Split(history, "\n")
+	var summary []string
+	for _, line := range lines {
+		if strings.HasPrefix(line, "Human: ") || strings.HasPrefix(line, "Assistant: ") {
+			summary = append(summary, line)
+			if len(summary) >= 4 { // Keep only the first two rounds
+				break
+			}
+		}
+	}
+	return strings.Join(summary, "\n")
 }

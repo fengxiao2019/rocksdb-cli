@@ -33,10 +33,11 @@ type LLMConfig struct {
 
 // AgentConfig contains agent-specific configuration
 type AgentConfig struct {
-	MaxIterations int           `yaml:"max_iterations"`
-	ToolTimeout   time.Duration `yaml:"tool_timeout"`
-	EnableMemory  bool          `yaml:"enable_memory"`
-	MemorySize    int           `yaml:"memory_size"`
+	MaxIterations  int           `yaml:"max_iterations"`
+	ToolTimeout    time.Duration `yaml:"tool_timeout"`
+	EnableMemory   bool          `yaml:"enable_memory"`
+	MemorySize     int           `yaml:"memory_size"`
+	SmallModelMode bool          `yaml:"small_model_mode"` // 新增字段
 }
 
 // SecurityConfig contains security-related configuration

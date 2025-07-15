@@ -109,9 +109,13 @@ func (t *GetValueTool) Name() string {
 }
 
 func (t *GetValueTool) Description() string {
-	return `Get a value by key from RocksDB. 
-Input: {"args": {"key": "string", "column_family": "string (optional, default: default)"}}
-Returns: JSON with key, value, and column_family`
+	return `Get a value by key.
+【English】
+Get value by key.
+Args:
+  - key (string, required)
+  - column_family (string, optional, default: "default")
+Returns: JSON {key, value, column_family}`
 }
 
 // PutValueTool implements tools.Tool interface for putting values
@@ -161,9 +165,14 @@ func (t *PutValueTool) Name() string {
 }
 
 func (t *PutValueTool) Description() string {
-	return `Put a key-value pair into RocksDB.
-Input: {"args": {"key": "string", "value": "string", "column_family": "string (optional, default: default)"}}
-Returns: JSON with success status and stored data`
+	return `Put a key-value pair.
+【English】
+Put key-value pair.
+Args:
+  - key (string, required)
+  - value (string, required)
+  - column_family (string, optional, default: "default")
+Returns: JSON {success, key, value, column_family}`
 }
 
 // ScanRangeTool implements tools.Tool interface for range scanning
@@ -224,10 +233,26 @@ func (t *ScanRangeTool) Name() string {
 	return "scan_range"
 }
 
+// 优化描述：强调 scan_range 可用于全量遍历，prefix_scan 仅用于特定前缀，便于 LLM 区分
 func (t *ScanRangeTool) Description() string {
-	return `Scan a range of keys from RocksDB.
-Input: {"args": {"start_key": "string", "end_key": "string", "column_family": "string (optional)", "limit": "int (optional, default: 10)", "reverse": "bool (optional)"}}
-Returns: JSON with results array and metadata`
+	return `Scan a range of keys.
+【English】
+Scan a range of keys, or all keys if start_key and end_key are empty.
+Args:
+  - start_key (string, required, use "" for beginning)
+  - end_key (string, required, use "" for end)
+  - column_family (string, optional, default: "default")
+  - limit (int, optional, default: 10)
+  - reverse (bool, optional, default: false)
+Returns: JSON {results, count, start_key, end_key, column_family, limit, reverse}
+Note: To get all keys in a column family, set start_key and end_key to "".
+
+Example: To get all keys from 'users', set start_key="", end_key="", column_family="users".
+
+【中文】
+扫描一段 key 范围，若 start_key 和 end_key 为空则遍历所有 key。
+示例：获取 users 下所有 key，start_key=""，end_key=""，column_family="users"。
+`
 }
 
 // PrefixScanTool implements tools.Tool interface for prefix scanning
@@ -281,10 +306,24 @@ func (t *PrefixScanTool) Name() string {
 	return "prefix_scan"
 }
 
+// 优化描述：prefix_scan 仅用于前缀批量查询，避免误用
 func (t *PrefixScanTool) Description() string {
-	return `Scan keys with a specific prefix from RocksDB.
-Input: {"args": {"prefix": "string", "column_family": "string (optional)", "limit": "int (optional, default: 10)"}}
-Returns: JSON with results array and metadata`
+	return `Scan keys with a specific prefix.
+【English】
+Scan keys by prefix. Only returns keys that start with the given prefix.
+Args:
+  - prefix (string, required)
+  - column_family (string, optional, default: "default")
+  - limit (int, optional, default: 10)
+Returns: JSON {results, count, prefix, column_family, limit}
+Note: Use this only if you want keys starting with a specific prefix.
+
+Example: To get all keys starting with "user:", set prefix="user:".
+
+【中文】
+按前缀批量扫描 key，仅返回以 prefix 开头的 key。
+示例：获取所有以 user: 开头的 key，prefix="user:"。
+`
 }
 
 // ListColumnFamiliesTool implements tools.Tool interface for listing column families
@@ -316,9 +355,9 @@ func (t *ListColumnFamiliesTool) Name() string {
 }
 
 func (t *ListColumnFamiliesTool) Description() string {
-	return `List all column families in the RocksDB database.
-Input: {} (no parameters required)
-Returns: JSON with column families list and count`
+	return `List all column families.
+Args: none
+Returns: JSON {column_families, count}`
 }
 
 // GetLastTool implements tools.Tool interface for getting the last key-value pair
@@ -361,9 +400,11 @@ func (t *GetLastTool) Name() string {
 }
 
 func (t *GetLastTool) Description() string {
-	return `Get the last key-value pair from a column family.
-Input: {"args": {"column_family": "string (optional, default: default)"}}
-Returns: JSON with the last key-value pair`
+	return `Get the last key-value pair.
+Get last key-value pair in a column family.
+Args:
+  - column_family (string, optional, default: "default")
+Returns: JSON {key, value, column_family}`
 }
 
 // JSONQueryTool implements tools.Tool interface for JSON field queries
@@ -414,9 +455,14 @@ func (t *JSONQueryTool) Name() string {
 }
 
 func (t *JSONQueryTool) Description() string {
-	return `Query JSON values by field in RocksDB.
-Input: {"args": {"field": "string", "value": "string", "column_family": "string (optional)", "limit": "int (optional, default: 10)"}}
-Returns: JSON with matching results and metadata`
+	return `Query JSON values by field.
+Query JSON values by field.
+Args:
+  - field (string, required)
+  - value (string, required)
+  - column_family (string, optional, default: "default")
+  - limit (int, optional, default: 10)
+Returns: JSON {results, count, field, value, column_family}`
 }
 
 // GetStatsTool implements tools.Tool interface for getting database statistics
@@ -447,9 +493,10 @@ func (t *GetStatsTool) Name() string {
 }
 
 func (t *GetStatsTool) Description() string {
-	return `Get RocksDB database statistics and information.
-Input: {} (no parameters required)
-Returns: JSON with database statistics`
+	return `Get RocksDB database statistics.
+Get database statistics.
+Args: none
+Returns: JSON {stats}`
 }
 
 // SearchTool implements tools.Tool interface for complex search
@@ -513,7 +560,16 @@ func (t *SearchTool) Name() string {
 }
 
 func (t *SearchTool) Description() string {
-	return `复杂搜索：支持 key/value 子串、正则、多条件、分页。\nInput: {"args": {"key_pattern": "string", "value_pattern": "string", "column_family": "string (optional)", "limit": "int (optional, default: 10)", "after": "string (optional)", "regex": "bool (optional)"}}\nReturns: JSON with results, count, next_cursor, has_more.`
+	return `复杂搜索。
+Search keys/values with pattern or regex.
+Args:
+  - key_pattern (string, optional)
+  - value_pattern (string, optional)
+  - column_family (string, optional, default: "default")
+  - limit (int, optional, default: 10)
+  - after (string, optional)
+  - regex (bool, optional, default: false)
+Returns: JSON {results, count, next_cursor, has_more}`
 }
 
 // CreateRocksDBTools creates all RocksDB tools for the agent

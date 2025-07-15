@@ -9,6 +9,7 @@ import (
 	"rocksdb-cli/internal/db"
 
 	"github.com/tmc/langchaingo/agents"
+	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/googleai"
 	"github.com/tmc/langchaingo/llms/ollama"
@@ -31,14 +32,20 @@ type GraphChainAgent interface {
 	Close() error
 }
 
+// ExecutorInterface contains only the Call method for easy mocking
+type ExecutorInterface interface {
+	Call(ctx context.Context, inputs map[string]any, opts ...chains.ChainCallOption) (map[string]any, error)
+}
+
 // Agent implements the GraphChainAgent interface using langchaingo
 type Agent struct {
-	config   *Config
-	llm      llms.Model
-	executor *agents.Executor
-	tools    []tools.Tool
-	database *db.DB
-	memory   *ConversationMemory
+	config         *Config
+	llm            llms.Model
+	executor       ExecutorInterface
+	tools          []tools.Tool
+	database       *db.DB
+	memory         *ConversationMemory
+	SmallModelMode bool // New field for small model mode
 }
 
 // QueryResult represents the result of a query execution
@@ -77,6 +84,13 @@ func (a *Agent) Initialize(ctx context.Context, config *Config) error {
 	// Create database tools
 	a.tools = a.createDatabaseTools()
 
+	// Automatically determine small model mode (e.g., model name contains "mini", "tiny", "llama2-7b", "phi" etc.)
+	a.SmallModelMode = config.GraphChain.Agent.SmallModelMode
+	modelName := strings.ToLower(config.GraphChain.LLM.Model)
+	if !a.SmallModelMode && (strings.Contains(modelName, "mini") || strings.Contains(modelName, "tiny") || strings.Contains(modelName, "7b") || strings.Contains(modelName, "phi") || strings.Contains(modelName, "small")) {
+		a.SmallModelMode = true
+	}
+
 	// Initialize agent executor
 	a.executor, err = agents.Initialize(
 		a.llm,
@@ -114,36 +128,45 @@ func (a *Agent) ProcessQuery(ctx context.Context, query string) (*QueryResult, e
 	timeoutCtx, cancel := context.WithTimeout(ctx, a.config.GraphChain.LLM.Timeout)
 	defer cancel()
 
-	// Build inputs with memory context if enabled
 	inputs := map[string]any{
 		"input": query,
 	}
 
-	// Load memory context if memory is enabled
-	if a.memory != nil {
-		memoryVars, err := a.memory.LoadMemoryVariables(ctx, inputs)
-		if err != nil {
-			return &QueryResult{
-				Success:       false,
-				Error:         fmt.Sprintf("Failed to load memory: %v", err),
-				ExecutionTime: time.Since(startTime),
-			}, nil
+	// In small model mode, use a minimal prompt and token limit
+	if a.SmallModelMode {
+		tokenLimit := 512 // Can be adjusted based on model type
+		if strings.Contains(strings.ToLower(a.config.GraphChain.LLM.Model), "7b") {
+			tokenLimit = 2048
 		}
+		prompt := a.BuildSmallModelPrompt(query, tokenLimit, a.config.GraphChain.LLM.Model)
+		inputs["input"] = prompt
+	} else {
+		// Original flow
+		if a.memory != nil {
+			memoryVars, err := a.memory.LoadMemoryVariables(ctx, inputs)
+			if err != nil {
+				return &QueryResult{
+					Success:       false,
+					Error:         fmt.Sprintf("Failed to load memory: %v", err),
+					ExecutionTime: time.Since(startTime),
+				}, nil
+			}
 
-		// Add memory variables to inputs
-		for key, value := range memoryVars {
-			inputs[key] = value
-		}
+			// Add memory variables to inputs
+			for key, value := range memoryVars {
+				inputs[key] = value
+			}
 
-		// Enhance query with conversation history if available
-		if history, ok := memoryVars["history"].(string); ok && history != "" {
-			enhancedQuery := a.buildQueryWithHistory(query, history)
+			// Enhance query with conversation history if available
+			if history, ok := memoryVars["history"].(string); ok && history != "" {
+				enhancedQuery := a.buildQueryWithHistory(query, history)
+				inputs["input"] = enhancedQuery
+			}
+		} else {
+			// Fallback to simple enhanced query
+			enhancedQuery := a.buildEnhancedQuery(query)
 			inputs["input"] = enhancedQuery
 		}
-	} else {
-		// Fallback to simple enhanced query
-		enhancedQuery := a.buildEnhancedQuery(query)
-		inputs["input"] = enhancedQuery
 	}
 
 	// Execute the query using agent executor
@@ -208,27 +231,40 @@ func (a *Agent) ProcessQuery(ctx context.Context, query string) (*QueryResult, e
 // buildQueryWithHistory enhances the user query with conversation history
 func (a *Agent) buildQueryWithHistory(query, history string) string {
 	// Include conversation history in the system context
-	systemContext := fmt.Sprintf(`你是一个 RocksDB 数据库助手。请根据用户的问题，使用你可用的工具来回答。
+	systemContext := fmt.Sprintf(`You are a RocksDB database assistant. Please use your available tools to answer the user's question.
 
-对话历史：
+Conversation history:
 %s
 
-当前用户问题：%s
+Current user question: %s
 
-请根据对话历史的上下文，使用合适的工具回答当前问题，并提供清晰的解释。如果用户的问题涉及之前讨论的内容，请考虑历史上下文。`, history, query)
+Please use the appropriate tool to answer the current question based on the context of the conversation history, and provide a clear explanation. If the user's question involves previously discussed content, please consider the historical context.`, history, query)
 
 	return systemContext
 }
 
 // buildEnhancedQuery enhances the user query with database context
 func (a *Agent) buildEnhancedQuery(query string) string {
-	// Build simple system context - let agents.Executor handle tool information
-	systemContext := fmt.Sprintf(`你是一个 RocksDB 数据库助手。请根据用户的问题，使用你可用的工具来回答。
+	// Build enhanced system context with few-shot examples and anti-tokenization instruction
+	systemContext := `You are a RocksDB database assistant. Please use your available tools to answer the user's question.
 
-用户问题：%s
+[Tool selection examples]
+User question: Show all keys in users
+Should choose tool: scan_range, params start_key="", end_key="", column_family="users"
 
-请使用合适的工具回答这个问题，并提供清晰的解释。`, query)
+User question: Show all keys starting with user:
+Should choose tool: prefix_scan, params prefix="user:"
 
+User question: Get the value for key user:123
+Should choose tool: get_value, params key="user:123"
+
+[Important]
+- Please understand the user's question as a whole. Do not split the input into individual words for separate processing.
+- Only select the most appropriate tool and parameters based on the overall meaning of the question.
+
+User question: ` + query + `
+
+Please use the appropriate tool to answer this question and provide a clear explanation.`
 	return systemContext
 }
 
@@ -280,8 +316,8 @@ func (a *Agent) initializeLLM(config *Config) (llms.Model, error) {
 	}
 }
 
-// GetLangChainExecutor returns the underlying langchaingo executor for advanced usage
-func (a *Agent) GetLangChainExecutor() *agents.Executor {
+// GetLangChainExecutor returns the underlying executor for advanced usage
+func (a *Agent) GetLangChainExecutor() ExecutorInterface {
 	return a.executor
 }
 
@@ -328,4 +364,22 @@ func (a *Agent) GetConversationHistory(n int) []ConversationTurn {
 		return []ConversationTurn{}
 	}
 	return a.memory.GetRecentHistory(n)
+}
+
+// BuildSmallModelPrompt builds a minimal prompt for small models, automatically trimming history to fit the token limit
+func (a *Agent) BuildSmallModelPrompt(query string, tokenLimit int, model string) string {
+	var historyStr string
+	if a.memory != nil {
+		historyStr = a.memory.GetHistoryByTokenLimit(tokenLimit/2, model) // Reserve half tokens for history
+	}
+	// If history still exceeds limit, use summary
+	if EstimateTokenCount(historyStr, model) > tokenLimit/2 {
+		historyStr = SummarizeHistory(historyStr, model)
+	}
+	prompt := "You are a RocksDB assistant. Please answer as concisely as possible.\n"
+	if historyStr != "" {
+		prompt += historyStr + "\n"
+	}
+	prompt += "User question: " + query
+	return prompt
 }
