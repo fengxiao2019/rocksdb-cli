@@ -649,10 +649,15 @@ func (a *Agent) initializeLLM(config *Config) (llms.Model, error) {
 
 	switch strings.ToLower(llmConfig.Provider) {
 	case "openai":
-		return openai.New(
+		// Configure OpenAI client with optional BaseURL for OpenAI-compatible endpoints
+		openaiOptions := []openai.Option{
 			openai.WithModel(llmConfig.Model),
 			openai.WithToken(llmConfig.APIKey),
-		)
+		}
+		if llmConfig.BaseURL != "" {
+			openaiOptions = append(openaiOptions, openai.WithBaseURL(llmConfig.BaseURL))
+		}
+		return openai.New(openaiOptions...)
 	case "googleai", "google":
 		return googleai.New(
 			context.Background(),

@@ -38,25 +38,25 @@ func Start(rdb db.KeyValueDB) {
 		fmt.Println("Type 'help' for available commands, 'exit' or 'quit' to exit.")
 	}
 
+	// Create exit handler function
+	exitHandler := func() {
+		exitMutex.Lock()
+		if exiting {
+			exitMutex.Unlock()
+			return
+		}
+		exiting = true
+		exitMutex.Unlock()
+
+		fmt.Println("Bye.")
+		restoreTerminal()
+		os.Exit(0)
+	}
+
 	p := prompt.New(
 		func(in string) {
 			if !handler.Execute(in) {
-				// Use thread-safe exit handling
-				exitMutex.Lock()
-				if exiting {
-					exitMutex.Unlock()
-					return
-				}
-				exiting = true
-				exitMutex.Unlock()
-
-				fmt.Println("Bye.")
-				// Only fix terminal on WSL
-				if isWSL() {
-					fixWSLTerminal()
-				}
-				// Use os.Exit instead of panic to avoid go-prompt's signal handler conflicts
-				os.Exit(0)
+				exitHandler()
 			}
 		},
 		completer,
@@ -67,7 +67,16 @@ func Start(rdb db.KeyValueDB) {
 			}
 			return fmt.Sprintf("rocksdb%s[%s]> ", readOnlyFlag, state.CurrentCF), true
 		}),
+		prompt.OptionAddKeyBind(prompt.KeyBind{
+			Key: prompt.ControlC,
+			Fn: func(buf *prompt.Buffer) {
+				exitHandler()
+			},
+		}),
 	)
+
+	// Ensure terminal is always restored on exit
+	defer restoreTerminal()
 
 	// Set up safer panic recovery that doesn't interfere with signal handlers
 	defer func() {
@@ -106,6 +115,17 @@ func fixWSLTerminal() {
 	_ = cmd.Run()
 
 	// Method 3: Send terminal escape sequence to restore echo
+	fmt.Print("\033[?25h") // Show cursor
+	fmt.Print("\033[0m")   // Reset attributes
+}
+
+// restoreTerminal restores terminal to normal state (echo enabled, cursor visible)
+func restoreTerminal() {
+	// Restore echo
+	cmd := exec.Command("stty", "echo")
+	_ = cmd.Run()
+	
+	// Show cursor and reset attributes
 	fmt.Print("\033[?25h") // Show cursor
 	fmt.Print("\033[0m")   // Reset attributes
 }
