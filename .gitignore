@@ -54,3 +54,7 @@ coverage.html
 # Task planning files
 tasks/
 *.csv
+
+# Test scripts
+test_*.sh
+verify_*.sh
