@@ -8,6 +8,7 @@ require (
 	github.com/c-bata/go-prompt v0.2.6
 	github.com/linxGnu/grocksdb v1.10.1
 	github.com/mark3labs/mcp-go v0.32.0
+	github.com/oliveagle/jsonpath v0.0.0-20180606110733-2e52cf6e6852
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0
 	github.com/tmc/langchaingo v0.1.13

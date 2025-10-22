@@ -3,7 +3,10 @@ package jsonutil
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
+
+	"github.com/oliveagle/jsonpath"
 )
 
 // PrettyPrintWithNestedExpansion formats JSON with recursive nested JSON string expansion.
@@ -71,4 +74,51 @@ func isJSONString(s string) bool {
 	// Check if string starts and ends with JSON delimiters
 	return (strings.HasPrefix(trimmed, "{") && strings.HasSuffix(trimmed, "}")) ||
 		(strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]"))
+}
+
+// QueryJSONPath queries a JSON string using a JSONPath expression and returns the result as a JSON string.
+// It supports standard JSONPath syntax including:
+//   - Simple field access: $.name
+//   - Nested field access: $.user.name
+//   - Array indexing: $.items[0]
+//   - Wildcard selection: $.items[*]
+//
+// Returns an error if the JSON is invalid, the JSONPath expression is invalid,
+// or the path doesn't match any data.
+func QueryJSONPath(jsonData string, jsonPathExpr string) (string, error) {
+	// Validate JSON first
+	if !IsValidJSON(jsonData) {
+		return "", errors.New("invalid JSON data")
+	}
+
+	// Parse JSON data
+	var data interface{}
+	if err := json.Unmarshal([]byte(jsonData), &data); err != nil {
+		return "", errors.New("failed to parse JSON: " + err.Error())
+	}
+
+	// Compile and execute JSONPath
+	result, err := jsonpath.JsonPathLookup(data, jsonPathExpr)
+	if err != nil {
+		return "", errors.New("JSONPath query failed: " + err.Error())
+	}
+
+	// Convert result back to JSON string
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return "", errors.New("failed to marshal result: " + err.Error())
+	}
+
+	return string(resultJSON), nil
+}
+
+// IsValidJSON checks if a string is valid JSON.
+// Returns true if the string can be parsed as valid JSON, false otherwise.
+func IsValidJSON(s string) bool {
+	if strings.TrimSpace(s) == "" {
+		return false
+	}
+
+	var js interface{}
+	return json.Unmarshal([]byte(s), &js) == nil
 }

@@ -634,6 +634,87 @@ func (h *Handler) Execute(input string) bool {
 			formattedValue := formatValue(value, pretty)
 			fmt.Printf("Last entry in '%s': %s = %s\n", cf, util.FormatKey(key), formattedValue)
 		}
+	case "jpath", "jsonpath":
+		// Get current CF if available
+		currentCF := ""
+		if s, ok := h.State.(*ReplState); ok && s != nil {
+			currentCF = s.CurrentCF
+		}
+
+		// Parse flags and arguments
+		flags, args := parseFlags(parts[1:])
+		pretty := flags["pretty"] == "true"
+		useSmart := flags["smart"] != "false" // Default to true
+
+		var cf, key, jsonPathExpr string
+
+		switch len(args) {
+		case 2: // jpath <key> <jsonpath> (using current CF)
+			if currentCF == "" {
+				fmt.Println("No current column family set")
+				return true
+			}
+			cf = currentCF
+			key = args[0]
+			jsonPathExpr = args[1]
+		case 3: // jpath <cf> <key> <jsonpath>
+			cf = args[0]
+			key = args[1]
+			jsonPathExpr = args[2]
+		default:
+			fmt.Println("Usage: jpath [<cf>] <key> <jsonpath> [--pretty] [--smart=true|false]")
+			fmt.Println("  Query JSON value using JSONPath expression")
+			fmt.Println("  Examples:")
+			fmt.Println("    jpath user:123 \"$.name\"")
+			fmt.Println("    jpath users user:123 \"$.profile.email\"")
+			fmt.Println("    jpath orders order:456 \"$.items[0].price\" --pretty")
+			fmt.Println("    jpath products prod:789 \"$.tags[*]\"")
+			fmt.Println("")
+			fmt.Println("  Common JSONPath expressions:")
+			fmt.Println("    $.field         - Get field value")
+			fmt.Println("    $.user.name     - Get nested field")
+			fmt.Println("    $.items[0]      - Get first array item")
+			fmt.Println("    $.items[*]      - Get all array items")
+			fmt.Println("    $               - Get entire JSON")
+			return true
+		}
+
+		// Get the value from the database
+		var value string
+		var err error
+
+		if useSmart {
+			value, err = h.DB.SmartGetCF(cf, key)
+		} else {
+			value, err = h.DB.GetCF(cf, key)
+		}
+
+		if err != nil {
+			handleError(err, "Query", key, cf)
+			return true
+		}
+
+		// Check if value is valid JSON
+		if !jsonutil.IsValidJSON(value) {
+			fmt.Printf("Error: Value for key '%s' is not valid JSON\n", key)
+			fmt.Printf("Value: %s\n", value)
+			return true
+		}
+
+		// Query using JSONPath
+		result, err := jsonutil.QueryJSONPath(value, jsonPathExpr)
+		if err != nil {
+			fmt.Printf("JSONPath query error: %v\n", err)
+			return true
+		}
+
+		// Format and display result
+		if pretty {
+			formattedResult := jsonutil.PrettyPrintWithNestedExpansion(result)
+			fmt.Printf("%s\n", formattedResult)
+		} else {
+			fmt.Printf("%s\n", result)
+		}
 	case "jsonquery":
 		// Get current CF if available
 		currentCF := ""
@@ -961,6 +1042,7 @@ func (h *Handler) Execute(input string) bool {
 		fmt.Println("    Use * as wildcard to scan all entries (e.g., scan * or scan * *)")
 		fmt.Println("  last [<cf>] [--pretty]        - Get last key-value pair from CF")
 		fmt.Println("  export [<cf>] <file_path>     - Export CF to CSV file")
+		fmt.Println("  jpath [<cf>] <key> <jsonpath> [--pretty] - Query JSON value using JSONPath")
 		fmt.Println("  jsonquery [<cf>] <field> <value> [--pretty] - Query entries by JSON field value")
 		fmt.Println("  stats [<cf>] [--detailed] [--pretty] - Show database/column family statistics")
 		fmt.Println("  keyformat [<cf>]              - Show detected key format and conversion examples")
@@ -1000,6 +1082,8 @@ func (h *Handler) Execute(input string) bool {
 			fmt.Println("  - Current column family is shown in prompt: rocksdb[current_cf]>")
 		}
 
+		fmt.Println("  - jpath queries JSON values using JSONPath expressions ($.field, $.items[0], etc.)")
+		fmt.Println("    Example: jpath user:123 \"$.profile.email\" extracts email from user profile")
 		fmt.Println("  - jsonquery searches for JSON values where field matches value exactly")
 		fmt.Println("    Example: jsonquery name \"Alice\" finds all entries where name field = \"Alice\"")
 		fmt.Println("  - stats command shows key count, data types, size distribution, and common patterns")
