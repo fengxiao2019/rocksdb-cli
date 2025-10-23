@@ -505,27 +505,40 @@ func TestExecuteScan(t *testing.T) {
 				return // Skip output validation for error cases
 			}
 
+			// Parse new output format: [N] Key: xxx\n    Value: xxx\n\n
 			lines := strings.Split(strings.TrimSpace(output), "\n")
 			if len(lines) == 1 && lines[0] == "" {
 				lines = []string{} // Handle empty output
 			}
 
-			if len(lines) != len(tt.wantKeys) {
-				t.Errorf("Expected %d lines, got %d", len(tt.wantKeys), len(lines))
+			// Extract keys from the new format
+			var foundKeys []string
+			for _, line := range lines {
+				// Look for lines starting with [N] Key:
+				if strings.Contains(line, "] Key: ") {
+					parts := strings.SplitN(line, "] Key: ", 2)
+					if len(parts) == 2 {
+						foundKeys = append(foundKeys, parts[1])
+					}
+				}
+			}
+
+			if len(foundKeys) != len(tt.wantKeys) {
+				t.Errorf("Expected %d keys, got %d", len(tt.wantKeys), len(foundKeys))
 				t.Errorf("Output: %q", output)
+				t.Errorf("Found keys: %v", foundKeys)
 				return
 			}
 
-			for i, line := range lines {
-				expectedKey := tt.wantKeys[i]
-				if tt.keysOnly {
-					if line != expectedKey {
-						t.Errorf("Line %d: expected key %q, got %q", i, expectedKey, line)
-					}
-				} else {
-					if !strings.HasPrefix(line, expectedKey+": ") {
-						t.Errorf("Line %d: expected line to start with %q, got %q", i, expectedKey+": ", line)
-					}
+			// Check that all expected keys are present (order doesn't matter for map iteration)
+			foundKeyMap := make(map[string]bool)
+			for _, key := range foundKeys {
+				foundKeyMap[key] = true
+			}
+			
+			for _, expectedKey := range tt.wantKeys {
+				if !foundKeyMap[expectedKey] {
+					t.Errorf("Expected key %q not found in output", expectedKey)
 				}
 			}
 		})
@@ -613,21 +626,40 @@ func TestExecutePrefix(t *testing.T) {
 				return // Skip output validation for error cases
 			}
 
+			// Parse new output format: [N] Key: xxx\n    Value: xxx\n\n
 			lines := strings.Split(strings.TrimSpace(output), "\n")
 			if len(lines) == 1 && lines[0] == "" {
 				lines = []string{} // Handle empty output
 			}
 
-			if len(lines) != len(tt.wantKeys) {
-				t.Errorf("Expected %d lines, got %d", len(tt.wantKeys), len(lines))
+			// Extract keys from the new format
+			var foundKeys []string
+			for _, line := range lines {
+				// Look for lines starting with [N] Key:
+				if strings.Contains(line, "] Key: ") {
+					parts := strings.SplitN(line, "] Key: ", 2)
+					if len(parts) == 2 {
+						foundKeys = append(foundKeys, parts[1])
+					}
+				}
+			}
+
+			if len(foundKeys) != len(tt.wantKeys) {
+				t.Errorf("Expected %d keys, got %d", len(tt.wantKeys), len(foundKeys))
 				t.Errorf("Output: %q", output)
+				t.Errorf("Found keys: %v", foundKeys)
 				return
 			}
 
-			for i, line := range lines {
-				expectedKey := tt.wantKeys[i]
-				if !strings.HasPrefix(line, expectedKey+": ") {
-					t.Errorf("Line %d: expected line to start with %q, got %q", i, expectedKey+": ", line)
+			// Check that all expected keys are present (order doesn't matter for map iteration)
+			foundKeyMap := make(map[string]bool)
+			for _, key := range foundKeys {
+				foundKeyMap[key] = true
+			}
+			
+			for _, expectedKey := range tt.wantKeys {
+				if !foundKeyMap[expectedKey] {
+					t.Errorf("Expected key %q not found in output", expectedKey)
 				}
 			}
 		})
