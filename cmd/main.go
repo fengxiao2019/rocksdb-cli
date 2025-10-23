@@ -15,6 +15,7 @@ import (
 	"rocksdb-cli/internal/graphchain"
 	"rocksdb-cli/internal/jsonutil"
 	"rocksdb-cli/internal/repl"
+	"rocksdb-cli/internal/transform"
 	"rocksdb-cli/internal/util"
 
 	"github.com/spf13/cobra"
@@ -31,15 +32,36 @@ var (
 // Root command
 var rootCmd = &cobra.Command{
 	Use:   "rocksdb-cli",
-	Short: "Interactive RocksDB command-line tool with column family support",
-	Long: `RocksDB CLI is a powerful command-line interface for RocksDB databases that provides:
-- Interactive REPL with column family support
-- Direct command-line operations for scripting
-- Data export capabilities
-- Real-time monitoring with watch mode
-- GraphChain Agent for natural language queries (AI-powered)
+	Short: "🗄️  Powerful CLI for RocksDB databases",
+	Long: `🗄️  RocksDB CLI - Command-line interface for RocksDB databases
 
-For interactive mode, use: rocksdb-cli repl --db /path/to/database`,
+FEATURES:
+  📟 Interactive REPL       - Real-time database exploration
+  🔄 Transform Data         - Batch data transformation with Python
+  🤖 AI Assistant           - Natural language queries (GraphChain)
+  📊 Data Export            - Export to CSV and other formats
+  🔍 Advanced Search        - Fuzzy search, JSON queries, prefix scan
+  👁️  Real-time Monitor      - Watch for changes as they happen
+
+QUICK START:
+  # Interactive mode (recommended for exploration)
+  rocksdb-cli repl --db /path/to/database
+
+  # Direct commands (good for scripting)
+  rocksdb-cli get --db mydb --cf users user:1001
+  rocksdb-cli scan --db mydb --cf logs --limit=100
+
+  # AI-powered queries
+  rocksdb-cli ai --db mydb "show me all active users"
+
+  # Data transformation
+  rocksdb-cli transform --db mydb --cf users --expr="value.upper()" --dry-run
+
+REQUIREMENTS:
+  • Python 3 (required for transform command)
+  • RocksDB database file path
+
+TIP: Use --read-only flag to safely explore production databases`,
 }
 
 // REPL command - maintains existing interactive experience
@@ -508,6 +530,152 @@ If no query is provided, starts interactive mode.`,
 	},
 }
 
+// Transform command - data transformation with Python
+var transformCmd = &cobra.Command{
+	Use:   "transform",
+	Short: "Transform key-value data using Python expressions",
+	Long: `Transform key-value data using Python expressions or scripts.
+
+DESCRIPTION:
+  Apply Python transformations to values in a column family. Supports:
+  • Python expressions (inline)
+  • Python script files (with custom functions)
+  • Filtering (skip entries that don't match conditions)
+  • Dry-run mode (preview changes safely)
+  • Batch processing (handle large datasets efficiently)
+
+QUICK START:
+  # Preview transformation (safe, no changes)
+  rocksdb-cli transform --db mydb --cf users --expr="value.upper()" --dry-run
+
+  # Actually apply transformation
+  rocksdb-cli transform --db mydb --cf users --expr="value.upper()"
+
+EXPRESSION EXAMPLES:
+  • Simple text:      --expr="value.upper()"
+  • JSON field:       --expr="import json; d=json.loads(value); d['name']=d['name'].upper(); json.dumps(d)"
+  • With filter:      --filter="'active' in value" --expr="value.upper()"
+  • Key-based filter: --filter="key.startswith('user:')" --expr="value.upper()"
+
+SCRIPT FILE EXAMPLES:
+  # Use a Python script file
+  rocksdb-cli transform --db mydb --cf users --script=scripts/transform/transform_uppercase_name.py
+
+  # Script file format (scripts/transform/transform_uppercase_name.py):
+  import json
+  
+  def should_process(key, value):
+      # Return True to process, False to skip
+      data = json.loads(value)
+      return 'name' in data
+  
+  def transform_value(key, value):
+      # Transform the value
+      data = json.loads(value)
+      data['name'] = data['name'].upper()
+      return json.dumps(data)
+
+SAFETY TIPS:
+  ⚠️  Always use --dry-run first to preview changes
+  💡 Start with --limit=10 to test on small dataset
+  📊 Check the statistics output before proceeding
+  💾 Consider backing up your database first
+
+CONTEXT VARIABLES (available in expressions):
+  • key    - The entry's key (string)
+  • value  - The entry's value (string)`,
+	Run: func(cmd *cobra.Command, args []string) {
+		// Open database
+		rdb := openDatabase()
+		defer rdb.Close()
+		
+		// Get flags
+		cf, _ := cmd.Flags().GetString("cf")
+		expr, _ := cmd.Flags().GetString("expr")
+		keyExpr, _ := cmd.Flags().GetString("key-expr")
+		valueExpr, _ := cmd.Flags().GetString("value-expr")
+		filterExpr, _ := cmd.Flags().GetString("filter")
+		scriptPath, _ := cmd.Flags().GetString("script")
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+		limit, _ := cmd.Flags().GetInt("limit")
+		batchSize, _ := cmd.Flags().GetInt("batch-size")
+		verbose, _ := cmd.Flags().GetBool("verbose")
+		
+		// Create transform options
+		opts := transform.TransformOptions{
+			Expression:       expr,
+			KeyExpression:    keyExpr,
+			ValueExpression:  valueExpr,
+			FilterExpression: filterExpr,
+			ScriptPath:       scriptPath,
+			DryRun:           dryRun,
+			Limit:            limit,
+			BatchSize:        batchSize,
+			Verbose:          verbose,
+		}
+		
+		// Create transform processor
+		processor := transform.NewTransformProcessor(rdb)
+		
+		// Execute transformation
+		fmt.Printf("Transforming column family '%s'...\n", cf)
+		if dryRun {
+			fmt.Println("(DRY RUN - no changes will be made)")
+		}
+		fmt.Println()
+		
+		result, err := processor.Process(cf, opts)
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+		
+		// Display results
+		fmt.Printf("Transform completed in %v\n", result.Duration)
+		fmt.Printf("Processed: %d entries\n", result.Processed)
+		fmt.Printf("Modified:  %d entries\n", result.Modified)
+		fmt.Printf("Skipped:   %d entries\n", result.Skipped)
+		fmt.Printf("Errors:    %d\n", len(result.Errors))
+		
+		// Show dry-run preview
+		if dryRun && len(result.DryRunData) > 0 {
+			fmt.Printf("\nPreview (showing %d entries):\n", len(result.DryRunData))
+			fmt.Println(strings.Repeat("=", 80))
+			for i, entry := range result.DryRunData {
+				if i >= 10 {
+					fmt.Printf("\n... and %d more entries\n", len(result.DryRunData)-10)
+					break
+				}
+				fmt.Printf("\n[%d] Key: %s\n", i+1, entry.OriginalKey)
+				if entry.WillModify {
+					fmt.Printf("    Original:    %s\n", entry.OriginalValue)
+					fmt.Printf("    Transformed: %s\n", entry.TransformedValue)
+					fmt.Printf("    Status: WILL MODIFY\n")
+				} else if entry.Skipped {
+					fmt.Printf("    Value: %s\n", entry.OriginalValue)
+					fmt.Printf("    Status: SKIPPED (filtered out)\n")
+				} else {
+					fmt.Printf("    Value: %s\n", entry.OriginalValue)
+					fmt.Printf("    Status: NO CHANGE\n")
+				}
+			}
+		}
+		
+		// Show errors if any
+		if len(result.Errors) > 0 {
+			fmt.Printf("\nErrors encountered:\n")
+			for i, err := range result.Errors {
+				if i >= 5 {
+					fmt.Printf("... and %d more errors\n", len(result.Errors)-5)
+					break
+				}
+				fmt.Printf("  - Key: %s\n", err.Key)
+				fmt.Printf("    Error: %s\n", err.Error)
+			}
+		}
+	},
+}
+
 // Helper functions
 func openDatabase() db.KeyValueDB {
 	var rdb db.KeyValueDB
@@ -821,6 +989,18 @@ func init() {
 	jsonqueryCmd.Flags().String("field", "", "Field name for JSON query")
 	jsonqueryCmd.Flags().String("value", "", "Field value for JSON query")
 
+	// Transform command specific flags
+	transformCmd.Flags().StringP("cf", "c", "default", "Column family to transform")
+	transformCmd.Flags().String("expr", "", "Python expression (e.g., \"value.upper()\")")
+	transformCmd.Flags().String("key-expr", "", "Transform keys with Python expression")
+	transformCmd.Flags().String("value-expr", "", "Transform values with Python expression (alternative to --expr)")
+	transformCmd.Flags().String("filter", "", "Filter entries with Python boolean (e.g., \"'active' in value\")")
+	transformCmd.Flags().String("script", "", "Python script file (must define transform_value() and optionally should_process())")
+	transformCmd.Flags().Bool("dry-run", false, "🔍 Preview mode - show changes without applying them (RECOMMENDED)")
+	transformCmd.Flags().Int("limit", 0, "Process only N entries (0 = all, use small number for testing)")
+	transformCmd.Flags().Int("batch-size", 1000, "Internal batch size for processing")
+	transformCmd.Flags().Bool("verbose", false, "Show detailed progress information")
+
 	// Add all commands to root
 	rootCmd.AddCommand(replCmd)
 	rootCmd.AddCommand(getCmd)
@@ -838,6 +1018,7 @@ func init() {
 	rootCmd.AddCommand(createcfCmd)
 	rootCmd.AddCommand(dropcfCmd)
 	rootCmd.AddCommand(aiCmd)
+	rootCmd.AddCommand(transformCmd)
 
 	// Mark required flags
 	rootCmd.MarkPersistentFlagRequired("db")

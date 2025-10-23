@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -153,8 +154,94 @@ func (e *pythonExecutor) toPythonValue(value interface{}) (string, error) {
 
 // ExecuteScript executes a Python script file
 func (e *pythonExecutor) ExecuteScript(scriptPath string, key string, value string) (string, string, error) {
-	// TODO: Implement Python script file execution
-	return "", "", fmt.Errorf("not implemented: ExecuteScript")
+	// Read script file
+	scriptContent, err := os.ReadFile(scriptPath)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read script file: %w", err)
+	}
+	
+	// Build Python script that loads the user's script and calls its functions
+	script := fmt.Sprintf(`
+import sys
+import json
+
+# User's script
+%s
+
+# Check if should_process function exists and call it
+should_process_result = True
+if 'should_process' in dir():
+    try:
+        should_process_result = should_process(%s, %s)
+    except Exception as e:
+        print(f"Error in should_process: {e}", file=sys.stderr)
+        sys.exit(1)
+
+# If filtered out, exit early
+if not should_process_result:
+    print("False")
+    sys.exit(0)
+
+# Call transform_value function if it exists
+transformed = %s
+if 'transform_value' in dir():
+    try:
+        transformed = transform_value(%s, %s)
+    except Exception as e:
+        print(f"Error in transform_value: {e}", file=sys.stderr)
+        sys.exit(1)
+
+print("True")
+print(transformed)
+`, string(scriptContent), 
+		e.quotePythonString(key), 
+		e.quotePythonString(value),
+		e.quotePythonString(value),
+		e.quotePythonString(key),
+		e.quotePythonString(value))
+	
+	// Execute with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), e.timeout)
+	defer cancel()
+	
+	cmd := exec.CommandContext(ctx, e.pythonCommand, "-c", script)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	
+	err = cmd.Run()
+	if err != nil {
+		errMsg := strings.TrimSpace(stderr.String())
+		if errMsg != "" {
+			return "", "", fmt.Errorf("script execution error: %s", errMsg)
+		}
+		return "", "", fmt.Errorf("script execution failed: %w", err)
+	}
+	
+	// Parse output
+	output := strings.TrimSpace(stdout.String())
+	lines := strings.Split(output, "\n")
+	
+	if len(lines) < 1 {
+		return "", "", fmt.Errorf("unexpected script output")
+	}
+	
+	// First line is should_process result ("True" or "False")
+	shouldProcess := lines[0]
+	
+	// If filtered out, return empty strings to indicate skip
+	if shouldProcess == "False" {
+		return "", "", nil // Empty strings mean "skip this entry"
+	}
+	
+	// Second line (if exists) is transformed value
+	transformedValue := value
+	if len(lines) >= 2 {
+		transformedValue = strings.Join(lines[1:], "\n")
+	}
+	
+	// Return key (unchanged for now) and transformed value
+	return key, transformedValue, nil
 }
 
 // ValidateExpression validates Python expression syntax

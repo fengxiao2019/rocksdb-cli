@@ -5,12 +5,21 @@ An interactive RocksDB command-line tool written in Go, with support for multipl
 ## Table of Contents
 - [Quick Start](#quick-start)
 - [Features](#features)
+- [Transform Command](#transform-command)
+  - [Quick Start](#quick-start-1)
+  - [Expression Examples](#expression-examples)
+  - [Script File Usage](#script-file-usage)
+  - [Available Scripts](#available-scripts)
+  - [Safety Tips](#safety-tips)
+  - [Requirements](#requirements)
+- [Advanced Search (search tool)](#advanced-search-search-tool)
 - [GraphChain Agent (AI-Powered)](#graphchain-agent-ai-powered)
   - [Quick Start with GraphChain](#quick-start-with-graphchain)
   - [Configuration](#configuration)
   - [Natural Language Examples](#natural-language-examples)
   - [Supported LLM Providers](#supported-llm-providers)
 - [Installation and Build Process](#installation-and-build-process)
+- [Available Commands](#available-commands)
 - [Usage](#usage)
   - [Command Line Help](#command-line-help)
   - [Interactive Mode](#interactive-mode)
@@ -21,41 +30,158 @@ An interactive RocksDB command-line tool written in Go, with support for multipl
 - [JSON Features](#json-pretty-print)
 - [Generate Test Database](#generate-test-database)
 - [MCP Server Support](#mcp-server-support)
-- [Advanced Search (search tool)](#advanced-search-search-tool)
 
 ## Quick Start
 
 ```bash
-# Interactive mode
-rocksdb-cli --db /path/to/database
+# Interactive mode (recommended for exploration)
+rocksdb-cli repl --db /path/to/database
 
-# AI-powered mode (GraphChain Agent)
-rocksdb-cli --db /path/to/database --graphchain
+# Direct commands (good for scripting)
+rocksdb-cli get --db mydb --cf users user:1001
+rocksdb-cli scan --db mydb --cf logs --limit=100
+
+# AI-powered queries
+rocksdb-cli ai --db mydb "show me all active users"
+
+# Data transformation (preview mode)
+rocksdb-cli transform --db mydb --cf users --expr="value.upper()" --dry-run
 
 # Find keys by prefix
-rocksdb-cli --db /path/to/database --prefix users --prefix-key "user:"
+rocksdb-cli prefix --db mydb --cf users --prefix "user:" --limit=50
 
-# Scan key ranges
-rocksdb-cli --db /path/to/database --scan users --start "user:1000" --end "user:2000" --pretty
-
-# Get last entry
-rocksdb-cli --db /path/to/database --last users --pretty
+# Real-time monitoring
+rocksdb-cli watch --db mydb --cf events
 ```
 
 ## Features
-- **🤖 GraphChain Agent** - AI-powered natural language queries using LLMs (OpenAI, Ollama, Google AI)
-- **Interactive command-line (REPL)** - Full-featured REPL with command history
-- **Query by key** with JSON pretty print support
-- **Prefix scanning** - Find keys starting with specific patterns (both interactive and command-line)
-- **Range scanning** - Scan key ranges with flexible options (reverse, limit, keys-only)
-- **JSON field querying** - Search entries by JSON field values
-- **Data manipulation** - Insert/Update key-value pairs
-- **Column family management** - Full support for multiple column families
-- **CSV export functionality** - Export column families to CSV files
-- **Real-time monitoring** - Watch mode for live data changes
-- **Docker support** - Easy deployment with pre-built Docker images
-- **Read-only mode** - Safe concurrent access for production environments
-- **MCP Server** - Model Context Protocol server for AI integration
+- **📟 Interactive REPL** - Real-time database exploration with command history
+- **🔄 Transform Data** - Batch data transformation with Python expressions or scripts
+- **🤖 AI Assistant** - Natural language queries using LLMs (OpenAI, Ollama, Google AI)
+- **📊 Data Export** - Export to CSV and other formats
+- **🔍 Advanced Search** - Fuzzy search, JSON queries, prefix/range scan
+- **👁️ Real-time Monitor** - Watch mode for live data changes
+- **🗄️ Column Family Support** - Full support for multiple column families
+- **💾 Read-only Mode** - Safe concurrent access for production environments
+- **🐳 Docker Support** - Easy deployment with pre-built Docker images
+- **🔌 MCP Server** - Model Context Protocol server for AI integration
+
+## Transform Command
+
+The `transform` command enables batch data transformation using Python expressions or script files. Perfect for data migration, cleanup, and batch updates.
+
+### Quick Start
+
+```bash
+# Preview transformation (safe, no changes)
+rocksdb-cli transform --db mydb --cf users --expr="value.upper()" --dry-run
+
+# Apply transformation
+rocksdb-cli transform --db mydb --cf users --expr="value.upper()"
+
+# Use a Python script file
+rocksdb-cli transform --db mydb --cf users --script=scripts/transform/transform_uppercase_name.py --dry-run
+```
+
+### Features
+
+- ✅ **Python Expressions** - Inline transformations with Python code
+- ✅ **Python Scripts** - Reusable transformation logic with filtering
+- ✅ **Dry-run Mode** - Preview changes before applying (RECOMMENDED)
+- ✅ **Filtering** - Process only entries matching conditions
+- ✅ **Batch Processing** - Efficiently handle large datasets
+- ✅ **Statistics** - Detailed processing reports
+
+### Expression Examples
+
+```bash
+# Simple text transformation
+rocksdb-cli transform --db mydb --cf users --expr="value.upper()" --dry-run
+
+# JSON field modification
+rocksdb-cli transform --db mydb --cf users \
+  --expr="import json; d=json.loads(value); d['status']='active'; json.dumps(d)" \
+  --dry-run
+
+# With filter condition
+rocksdb-cli transform --db mydb --cf users \
+  --filter="'admin' in value" \
+  --expr="value.upper()" \
+  --dry-run
+
+# Key-based filter
+rocksdb-cli transform --db mydb --cf users \
+  --filter="key.startswith('user:')" \
+  --expr="value.upper()" \
+  --dry-run --limit=10
+```
+
+### Script File Usage
+
+Transform scripts provide more flexibility with custom functions:
+
+```python
+# scripts/transform/my_transform.py
+import json
+
+def should_process(key, value):
+    """Return True to process, False to skip"""
+    try:
+        data = json.loads(value)
+        return 'name' in data
+    except:
+        return False
+
+def transform_value(key, value):
+    """Transform the value"""
+    data = json.loads(value)
+    data['name'] = data['name'].upper()
+    return json.dumps(data)
+```
+
+**Usage:**
+```bash
+rocksdb-cli transform --db mydb --cf users \
+  --script=scripts/transform/my_transform.py \
+  --dry-run --limit=10
+```
+
+### Available Scripts
+
+See [scripts/transform/README.md](scripts/transform/README.md) for pre-built transformation scripts:
+
+- **transform_uppercase_name.py** - Uppercase the 'name' field
+- **filter_by_age.py** - Filter and tag by age groups  
+- **flatten_nested_json.py** - Flatten nested JSON strings
+- **add_timestamp.py** - Add processing timestamp
+
+### Safety Tips
+
+⚠️  **Always use `--dry-run` first** to preview changes  
+💡 **Start with `--limit=10`** to test on small dataset  
+📊 **Check statistics output** before proceeding  
+💾 **Consider backing up** your database first  
+
+### Requirements
+
+- Python 3.6+ (must be installed and in PATH)
+- Standard library only for basic operations
+
+### Command Options
+
+```
+Flags:
+  -c, --cf string           Column family to transform (default "default")
+      --expr string         Python expression (e.g., "value.upper()")
+      --filter string       Filter entries with Python boolean
+      --script string       Python script file path
+      --dry-run             Preview mode - show changes without applying (RECOMMENDED)
+      --limit int           Process only N entries (0 = all)
+      --batch-size int      Internal batch size (default 1000)
+      --verbose             Show detailed progress information
+```
+
+For more details, run: `rocksdb-cli transform --help`
 
 ## Advanced Search (search tool)
 
@@ -459,6 +585,31 @@ make test
 # Run tests with coverage
 make test-coverage
 ```
+
+## Available Commands
+
+```
+  repl        Start interactive REPL mode
+  get         Get value by key from column family
+  put         Put key-value pair in column family
+  scan        Scan key-value pairs in range
+  prefix      Search by key prefix
+  last        Get the last key-value pair from column family
+  search      Fuzzy search for keys and values
+  jsonquery   Query by JSON field value
+  export      Export column family to CSV file
+  transform   Transform key-value data using Python expressions
+  watch       Watch for new entries in column family (real-time)
+  stats       Show database or column family statistics
+  listcf      List all column families
+  createcf    Create new column family
+  dropcf      Drop column family
+  keyformat   Show detected key format and conversion examples
+  ai          AI-powered database assistant (GraphChain)
+  help        Help about any command
+```
+
+Use `rocksdb-cli [command] --help` for more information about each command.
 
 ## Usage
 

@@ -43,7 +43,165 @@ func (p *transformProcessor) Process(cf string, opts TransformOptions) (*Transfo
 		return p.processMockData(cf, opts, result)
 	}
 	
-	// TODO: Implement real database processing
+	// Scan all entries in column family
+	scanOpts := db.ScanOptions{
+		Values: true,
+		Limit:  opts.Limit,
+	}
+	
+	entries, err := p.db.SmartScanCF(cf, "", "", scanOpts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan column family: %w", err)
+	}
+	
+	// Process each entry
+	for key, value := range entries {
+		// Check script file filter first (if using script)
+		if opts.ScriptPath != "" {
+			_, transformedValue, err := p.executor.ExecuteScript(opts.ScriptPath, key, value)
+			if err != nil {
+				result.Errors = append(result.Errors, TransformError{
+					Key:           key,
+					OriginalValue: value,
+					Error:         fmt.Sprintf("script error: %v", err),
+					Timestamp:     time.Now(),
+				})
+				result.Processed++
+				continue
+			}
+			
+			// Empty string means should_process returned False
+			if transformedValue == "" {
+				result.Skipped++
+				result.Processed++
+				if opts.DryRun {
+					result.DryRunData = append(result.DryRunData, DryRunEntry{
+						OriginalKey:      key,
+						TransformedKey:   key,
+						OriginalValue:    value,
+						TransformedValue: value,
+						WillModify:       false,
+						Skipped:          true,
+					})
+				}
+				continue
+			}
+			
+			// Check if value changed
+			willModify := transformedValue != value
+			
+			if opts.DryRun {
+				result.DryRunData = append(result.DryRunData, DryRunEntry{
+					OriginalKey:      key,
+					TransformedKey:   key,
+					OriginalValue:    value,
+					TransformedValue: transformedValue,
+					WillModify:       willModify,
+					Skipped:          false,
+				})
+			} else {
+				if willModify {
+					if err := p.db.PutCF(cf, key, transformedValue); err != nil {
+						result.Errors = append(result.Errors, TransformError{
+							Key:           key,
+							OriginalValue: value,
+							Error:         fmt.Sprintf("write error: %v", err),
+							Timestamp:     time.Now(),
+						})
+						result.Processed++
+						continue
+					}
+					result.Modified++
+				}
+			}
+			
+			result.Processed++
+			continue
+		}
+		
+		// Apply filter if specified (for expression mode)
+		if opts.FilterExpression != "" {
+			context := map[string]interface{}{
+				"key":   key,
+				"value": value,
+			}
+			filterResult, err := p.executor.ExecuteExpression(opts.FilterExpression, context)
+			if err != nil {
+				result.Errors = append(result.Errors, TransformError{
+					Key:           key,
+					OriginalValue: value,
+					Error:         fmt.Sprintf("filter error: %v", err),
+					Timestamp:     time.Now(),
+				})
+				result.Processed++
+				continue
+			}
+			
+			// Check if filter passed
+			shouldProcess := filterResult == "True" || filterResult == "true"
+			if !shouldProcess {
+				result.Skipped++
+				result.Processed++
+				if opts.DryRun {
+					result.DryRunData = append(result.DryRunData, DryRunEntry{
+						OriginalKey:      key,
+						TransformedKey:   key,
+						OriginalValue:    value,
+						TransformedValue: value,
+						WillModify:       false,
+						Skipped:          true,
+					})
+				}
+				continue
+			}
+		}
+		
+		// Apply transformation
+		transformedValue, err := p.transformValue(key, value, opts)
+		if err != nil {
+			result.Errors = append(result.Errors, TransformError{
+				Key:           key,
+				OriginalValue: value,
+				Error:         err.Error(),
+				Timestamp:     time.Now(),
+			})
+			result.Processed++
+			continue
+		}
+		
+		// Check if value changed
+		willModify := transformedValue != value
+		
+		if opts.DryRun {
+			// Add to dry-run data
+			result.DryRunData = append(result.DryRunData, DryRunEntry{
+				OriginalKey:      key,
+				TransformedKey:   key, // TODO: support key transformation
+				OriginalValue:    value,
+				TransformedValue: transformedValue,
+				WillModify:       willModify,
+				Skipped:          false,
+			})
+		} else {
+			// Actually write to database if modified
+			if willModify {
+				if err := p.db.PutCF(cf, key, transformedValue); err != nil {
+					result.Errors = append(result.Errors, TransformError{
+						Key:           key,
+						OriginalValue: value,
+						Error:         fmt.Sprintf("write error: %v", err),
+						Timestamp:     time.Now(),
+					})
+					result.Processed++
+					continue
+				}
+				result.Modified++
+			}
+		}
+		
+		result.Processed++
+	}
+	
 	result.EndTime = time.Now()
 	result.Duration = result.EndTime.Sub(result.StartTime)
 	
@@ -156,6 +314,19 @@ func (p *transformProcessor) processMockData(cf string, opts TransformOptions, r
 
 // transformValue applies the transformation expression to a value
 func (p *transformProcessor) transformValue(key, value string, opts TransformOptions) (string, error) {
+	// If script file is specified, use ExecuteScript
+	if opts.ScriptPath != "" {
+		_, transformedValue, err := p.executor.ExecuteScript(opts.ScriptPath, key, value)
+		if err != nil {
+			return "", fmt.Errorf("script execution failed: %w", err)
+		}
+		// Empty strings from ExecuteScript mean "skip this entry" (filtered by should_process)
+		if transformedValue == "" {
+			return value, nil // Return original value, will be handled by filter logic
+		}
+		return transformedValue, nil
+	}
+	
 	// Determine which expression to use
 	expr := opts.Expression
 	if opts.ValueExpression != "" {

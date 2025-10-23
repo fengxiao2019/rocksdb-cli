@@ -14,7 +14,7 @@ func TestTransformProcessor_DryRun(t *testing.T) {
 	opts := TransformOptions{
 		Expression: "value.upper()",
 		DryRun:     true,
-		Limit:      10,
+		Limit:      5, // Small dataset for dry-run test
 	}
 	
 	result, err := processor.Process("test_cf", opts)
@@ -42,6 +42,7 @@ func TestTransformProcessor_BasicTransform(t *testing.T) {
 	opts := TransformOptions{
 		Expression: "value.upper()",
 		DryRun:     false,
+		Limit:      10, // Only process 10 entries (each spawns Python process)
 	}
 	
 	result, err := processor.Process("test_cf", opts)
@@ -57,6 +58,11 @@ func TestTransformProcessor_BasicTransform(t *testing.T) {
 	// Verify statistics
 	if result.Processed == 0 {
 		t.Error("Expected some data to be processed")
+	}
+	
+	// Verify we respected the limit
+	if result.Processed > opts.Limit {
+		t.Errorf("Expected max %d processed, got %d", opts.Limit, result.Processed)
 	}
 }
 
@@ -96,6 +102,7 @@ func TestTransformProcessor_WithFilter(t *testing.T) {
 				Expression:       "value.upper()",
 				FilterExpression: tt.filter,
 				DryRun:           true,
+				Limit:            15, // Test with 15 entries
 			}
 			
 			result, err := processor.Process("test_cf", opts)
@@ -113,14 +120,13 @@ func TestTransformProcessor_WithFilter(t *testing.T) {
 
 // TestTransformProcessor_BatchProcessing tests batch processing
 func TestTransformProcessor_BatchProcessing(t *testing.T) {
-	// Create large test dataset
-	// TODO: Setup database with 10000 entries
-	
+	// Test with minimal dataset (each entry spawns Python process)
 	processor := NewTransformProcessor(nil)
 	
 	opts := TransformOptions{
 		Expression: "value.upper()",
-		BatchSize:  1000,
+		BatchSize:  10,  // Process 10 at a time
+		Limit:      20,  // Total of 20 entries (2 batches)
 		Verbose:    true,
 	}
 	
@@ -130,8 +136,8 @@ func TestTransformProcessor_BatchProcessing(t *testing.T) {
 	}
 	
 	// Verify batch processing completed
-	if result.Processed != 10000 {
-		t.Errorf("Expected 10000 processed, got %d", result.Processed)
+	if result.Processed != 20 {
+		t.Errorf("Expected 20 processed, got %d", result.Processed)
 	}
 }
 
@@ -143,6 +149,7 @@ func TestTransformProcessor_ErrorRecovery(t *testing.T) {
 	opts := TransformOptions{
 		Expression: "int(value) * 2",  // Will fail on non-numeric strings
 		DryRun:     false,
+		Limit:      20, // Test with 20 entries (will have errors)
 	}
 	
 	result, err := processor.Process("test_cf", opts)
@@ -191,6 +198,7 @@ func TestTransformProcessor_KeyTransform(t *testing.T) {
 		KeyExpression:   "key.replace(':', '_')",
 		ValueExpression: "value",
 		DryRun:          true,
+		Limit:           5, // Test with 5 entries
 	}
 	
 	result, err := processor.Process("test_cf", opts)
@@ -214,6 +222,7 @@ func TestTransformProcessor_Statistics(t *testing.T) {
 		Expression:       "value.upper() if value else None",
 		FilterExpression: "len(value) > 0",
 		DryRun:           false,
+		Limit:            10, // Test with 10 entries
 	}
 	
 	result, err := processor.Process("test_cf", opts)

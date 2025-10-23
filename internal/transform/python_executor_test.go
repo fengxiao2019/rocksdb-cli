@@ -2,6 +2,7 @@ package transform
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
 )
 
@@ -297,8 +298,205 @@ func TestPythonExecutor_ValidateExpression(t *testing.T) {
 
 // TestPythonExecutor_ScriptFile tests script file execution
 func TestPythonExecutor_ScriptFile(t *testing.T) {
-	// TODO: Create test script files and test execution
-	t.Skip("Script file tests to be implemented")
+	executor := NewPythonExecutor()
+	
+	tests := []struct {
+		name              string
+		scriptContent     string
+		key               string
+		value             string
+		expectedKey       string
+		expectedValue     string
+		expectSkip        bool // True if should_process returns False
+		wantErr           bool
+	}{
+		{
+			name: "basic transform_value",
+			scriptContent: `
+def transform_value(key, value):
+    return value.upper()
+`,
+			key:           "test:1",
+			value:         "hello world",
+			expectedKey:   "test:1",
+			expectedValue: "HELLO WORLD",
+			expectSkip:    false,
+			wantErr:       false,
+		},
+		{
+			name: "json transformation",
+			scriptContent: `
+import json
+
+def transform_value(key, value):
+    data = json.loads(value)
+    data['name'] = data['name'].upper()
+    return json.dumps(data)
+`,
+			key:           "user:1",
+			value:         `{"name":"alice","age":25}`,
+			expectedKey:   "user:1",
+			expectedValue: `{"name": "ALICE", "age": 25}`,
+			expectSkip:    false,
+			wantErr:       false,
+		},
+		{
+			name: "filter passes - should_process returns True",
+			scriptContent: `
+def should_process(key, value):
+    return 'alice' in value.lower()
+
+def transform_value(key, value):
+    return value.upper()
+`,
+			key:           "user:1",
+			value:         "Alice Smith",
+			expectedKey:   "user:1",
+			expectedValue: "ALICE SMITH",
+			expectSkip:    false,
+			wantErr:       false,
+		},
+		{
+			name: "filter fails - should_process returns False",
+			scriptContent: `
+def should_process(key, value):
+    return 'bob' in value.lower()
+
+def transform_value(key, value):
+    return value.upper()
+`,
+			key:         "user:1",
+			value:       "Alice Smith",
+			expectSkip:  true,
+			wantErr:     false,
+		},
+		{
+			name: "filter with JSON",
+			scriptContent: `
+import json
+
+def should_process(key, value):
+    try:
+        data = json.loads(value)
+        return data.get('age', 0) > 30
+    except:
+        return False
+
+def transform_value(key, value):
+    data = json.loads(value)
+    data['senior'] = True
+    return json.dumps(data)
+`,
+			key:           "user:1",
+			value:         `{"name":"Bob","age":35}`,
+			expectedKey:   "user:1",
+			expectedValue: `{"name": "Bob", "age": 35, "senior": true}`,
+			expectSkip:    false,
+			wantErr:       false,
+		},
+		{
+			name: "only should_process, no transform",
+			scriptContent: `
+def should_process(key, value):
+    return True
+`,
+			key:           "test:1",
+			value:         "original",
+			expectedKey:   "test:1",
+			expectedValue: "original",
+			expectSkip:    false,
+			wantErr:       false,
+		},
+		{
+			name: "error in transform_value",
+			scriptContent: `
+def transform_value(key, value):
+    return undefined_variable
+`,
+			key:     "test:1",
+			value:   "hello",
+			wantErr: true,
+		},
+	}
+	
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create temporary script file
+			tmpfile, err := createTempScript(tt.scriptContent)
+			if err != nil {
+				t.Fatalf("Failed to create temp script: %v", err)
+			}
+			defer removeTempScript(tmpfile)
+			
+			// Execute script
+			resultKey, resultValue, err := executor.ExecuteScript(tmpfile, tt.key, tt.value)
+			
+			// Check error expectation
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ExecuteScript() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			
+			if tt.wantErr {
+				return // Test passed, error expected
+			}
+			
+			// Check if entry should be skipped
+			if tt.expectSkip {
+				if resultValue != "" {
+					t.Errorf("Expected skip (empty value), got value: %s", resultValue)
+				}
+				return
+			}
+			
+			// Check results
+			if resultKey != tt.expectedKey {
+				t.Errorf("ExecuteScript() key = %v, want %v", resultKey, tt.expectedKey)
+			}
+			
+			// For JSON comparison, normalize format
+			if isJSONEqual(resultValue, tt.expectedValue) {
+				// JSON comparison passed
+			} else if resultValue != tt.expectedValue {
+				t.Errorf("ExecuteScript() value = %v, want %v", resultValue, tt.expectedValue)
+			}
+		})
+	}
+}
+
+// TestPythonExecutor_ScriptFileNotFound tests error when script file doesn't exist
+func TestPythonExecutor_ScriptFileNotFound(t *testing.T) {
+	executor := NewPythonExecutor()
+	
+	_, _, err := executor.ExecuteScript("/nonexistent/script.py", "key1", "value1")
+	if err == nil {
+		t.Error("Expected error for nonexistent script file, got nil")
+	}
+}
+
+// Helper functions for script file tests
+func createTempScript(content string) (string, error) {
+	tmpfile, err := os.CreateTemp("", "test_script_*.py")
+	if err != nil {
+		return "", err
+	}
+	
+	if _, err := tmpfile.Write([]byte(content)); err != nil {
+		tmpfile.Close()
+		os.Remove(tmpfile.Name())
+		return "", err
+	}
+	
+	if err := tmpfile.Close(); err != nil {
+		os.Remove(tmpfile.Name())
+		return "", err
+	}
+	
+	return tmpfile.Name(), nil
+}
+
+func removeTempScript(filename string) {
+	os.Remove(filename)
 }
 
 // TestPythonExecutor_Timeout tests execution timeout

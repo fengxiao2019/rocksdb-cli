@@ -58,3 +58,11 @@ tasks/
 # Test scripts
 test_*.sh
 verify_*.sh
+
+# Python cache and temporary files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+test_*.py
