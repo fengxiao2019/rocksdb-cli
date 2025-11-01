@@ -36,17 +36,17 @@ var (
 // Root command
 var rootCmd = &cobra.Command{
 	Use:   "rocksdb-cli",
-	Short: "🗄️  Powerful CLI for RocksDB databases",
-	Long: `🗄️  RocksDB CLI - Command-line interface for RocksDB databases
+	Short: "Powerful CLI for RocksDB databases",
+	Long: `RocksDB CLI - Command-line interface for RocksDB databases
 
 FEATURES:
-  🌐 Web UI                 - Modern web interface (single binary)
-  📟 Interactive REPL       - Real-time database exploration
-  🔄 Transform Data         - Batch data transformation with Python
-  🤖 AI Assistant           - Natural language queries (GraphChain)
-  📊 Data Export            - Export to CSV and other formats
-  🔍 Advanced Search        - Fuzzy search, JSON queries, prefix scan
-  👁️  Real-time Monitor      - Watch for changes as they happen
+  * Web UI                 - Modern web interface (single binary)
+  * Interactive REPL       - Real-time database exploration
+  * Transform Data         - Batch data transformation with Python
+  * AI Assistant           - Natural language queries (GraphChain)
+  * Data Export            - Export to CSV and other formats
+  * Advanced Search        - Fuzzy search, JSON queries, prefix scan
+  * Real-time Monitor      - Watch for changes as they happen
 
 QUICK START:
   # Web UI (easiest way to get started)
@@ -597,10 +597,10 @@ SCRIPT FILE EXAMPLES:
       return json.dumps(data)
 
 SAFETY TIPS:
-  ⚠️  Always use --dry-run first to preview changes
-  💡 Start with --limit=10 to test on small dataset
-  📊 Check the statistics output before proceeding
-  💾 Consider backing up your database first
+  WARNING: Always use --dry-run first to preview changes
+  TIP: Start with --limit=10 to test on small dataset
+  TIP: Check the statistics output before proceeding
+  TIP: Consider backing up your database first
 
 CONTEXT VARIABLES (available in expressions):
   • key    - The entry's key (string)
@@ -768,19 +768,19 @@ ENDPOINTS:
 				log.Fatalf("Failed to initialize AI agent: %v", err)
 			}
 			aiAgent = agent
-			fmt.Printf("🤖 AI Assistant enabled (GraphChain)\n")
+			fmt.Printf("AI Assistant enabled (GraphChain)\n")
 		}
 
 		// Setup router with embedded UI and optional AI
 		router := api.SetupRouterWithUI(rdb, staticFS, aiAgent)
 
 		addr := ":" + port
-		fmt.Printf("\n🚀 RocksDB Web UI Server starting...\n")
+		fmt.Printf("\nRocksDB Web UI Server starting...\n")
 		fmt.Printf("   Database: %s\n", dbPath)
 		fmt.Printf("   Read-only: %v\n", readOnly)
 		fmt.Printf("   AI Enabled: %v\n", enableAI)
 		fmt.Printf("   URL: http://localhost%s\n", addr)
-		fmt.Printf("\n💡 Open http://localhost%s in your browser\n\n", addr)
+		fmt.Printf("\nOpen http://localhost%s in your browser\n\n", addr)
 
 		// Start server
 		if err := router.Run(addr); err != nil {
@@ -977,7 +977,7 @@ func parseSep(s string) string {
 
 // runGraphChainInteractive starts GraphChain in interactive mode
 func runGraphChainInteractive(database db.KeyValueDB) {
-	fmt.Println("🤖 GraphChain AI Assistant - Interactive Mode")
+	fmt.Println("GraphChain AI Assistant - Interactive Mode")
 	fmt.Println("Ask me questions about your database!")
 	fmt.Println("Type 'exit' or press Ctrl+C to quit")
 	fmt.Println()
@@ -1045,8 +1045,8 @@ func runGraphChainQuery(database db.KeyValueDB, query string) {
 	}
 	defer agent.Close()
 
-	fmt.Printf("🔍 Processing: %s\n", query)
-	fmt.Printf("⏳ Please wait (this may take up to 20 seconds)...\n")
+	fmt.Printf("Processing: %s\n", query)
+	fmt.Printf("Please wait (this may take up to 20 seconds)...\n")
 
 	// Create a context with timeout
 	queryCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
@@ -1054,15 +1054,15 @@ func runGraphChainQuery(database db.KeyValueDB, query string) {
 
 	result, err := agent.ProcessQuery(queryCtx, query)
 	if err != nil {
-		fmt.Printf("❌ Error: %v\n", err)
+		fmt.Printf("Error: %v\n", err)
 	} else if result.Success {
-		fmt.Printf("✅ Result:\n%v\n", result.Data)
+		fmt.Printf("Result:\n%v\n", result.Data)
 		if result.Explanation != "" {
-			fmt.Printf("💡 Explanation: %s\n", result.Explanation)
+			fmt.Printf("Explanation: %s\n", result.Explanation)
 		}
-		fmt.Printf("⏱️  Execution time: %v\n", result.ExecutionTime)
+		fmt.Printf("Execution time: %v\n", result.ExecutionTime)
 	} else {
-		fmt.Printf("❌ Failed: %s\n", result.Error)
+		fmt.Printf("Failed: %s\n", result.Error)
 	}
 	fmt.Println()
 }
@@ -1123,7 +1123,7 @@ func init() {
 	transformCmd.Flags().String("value-expr", "", "Transform values with Python expression (alternative to --expr)")
 	transformCmd.Flags().String("filter", "", "Filter entries with Python boolean (e.g., \"'active' in value\")")
 	transformCmd.Flags().String("script", "", "Python script file (must define transform_value() and optionally should_process())")
-	transformCmd.Flags().Bool("dry-run", false, "🔍 Preview mode - show changes without applying them (RECOMMENDED)")
+	transformCmd.Flags().Bool("dry-run", false, "Preview mode - show changes without applying them (RECOMMENDED)")
 	transformCmd.Flags().Int("limit", 0, "Process only N entries (0 = all, use small number for testing)")
 	transformCmd.Flags().Int("batch-size", 1000, "Internal batch size for processing")
 	transformCmd.Flags().Bool("verbose", false, "Show detailed progress information")

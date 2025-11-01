@@ -628,11 +628,21 @@ For better performance or development purposes, you can build natively.
 
 #### Prerequisites
 
-RocksDB CLI requires RocksDB C++ libraries to be installed on your system.
+**Required:**
+- **Go 1.20+** - For building the Go backend
+- **Node.js 16+** and **npm** - For building the Web UI frontend
+- **RocksDB C++ libraries** - For database access
+- **Python 3.6+** (optional) - Required only for the `transform` command
+
+**Installation:**
 
 ##### macOS
 ```sh
+# Install RocksDB and dependencies
 brew install rocksdb snappy lz4 zstd bzip2
+
+# Install Node.js (if not already installed)
+brew install node
 
 # Configure environment variables (add to ~/.zshrc or ~/.bash_profile)
 export CGO_CFLAGS="-I/opt/homebrew/Cellar/rocksdb/*/include"
@@ -646,11 +656,19 @@ source ~/.zshrc
 ```sh
 sudo apt-get update
 sudo apt-get install librocksdb-dev libsnappy-dev liblz4-dev libzstd-dev libbz2-dev build-essential
+
+# Install Node.js (if not already installed)
+curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+sudo apt-get install -y nodejs
 ```
 
 ##### Linux (CentOS/RHEL)
 ```sh
 sudo yum install rocksdb-devel snappy-devel lz4-devel libzstd-devel bzip2-devel gcc-c++
+
+# Install Node.js (if not already installed)
+curl -fsSL https://rpm.nodesource.com/setup_18.x | sudo bash -
+sudo yum install -y nodejs
 ```
 
 ##### Windows
@@ -666,15 +684,80 @@ wsl --install
 Requires complex setup with vcpkg and Visual Studio. Docker is much easier.
 
 #### Building Native Executable
+
+**Important:** The project includes an embedded Web UI that must be built before compiling the Go binary.
+
+##### Step 1: Build Frontend (Web UI)
+
+The Web UI is a React + TypeScript application located in `web-ui/`. You need to build it first:
+
 ```sh
-# Install dependencies
+# Navigate to web-ui directory
+cd web-ui
+
+# Install Node.js dependencies
+npm install
+
+# Build the frontend (output goes to web-ui/dist/)
+npm run build
+
+# Return to project root
+cd ..
+```
+
+##### Step 2: Copy Built Files to Embed Directory
+
+The Go binary embeds files from `internal/webui/dist/`, so you need to copy the built files:
+
+```sh
+# Copy built frontend to internal embed directory
+cp -r web-ui/dist/* internal/webui/dist/
+```
+
+##### Step 3: Build Go Binary
+
+```sh
+# Install Go dependencies
 go mod tidy
 
-# Quick build (current platform)
+# Build the executable (embeds the Web UI)
+go build -o rocksdb-cli ./cmd
+```
+
+##### Complete Build Script
+
+For convenience, here's a complete build script:
+
+```sh
+#!/bin/bash
+# Complete build process
+
+# 1. Build frontend
+cd web-ui && npm install && npm run build && cd ..
+
+# 2. Copy to embed directory
+cp -r web-ui/dist/* internal/webui/dist/
+
+# 3. Build Go binary
+go mod tidy
 go build -o rocksdb-cli ./cmd
 
-# Or using make
-make build
+echo "Build complete! Binary: ./rocksdb-cli"
+```
+
+##### Development Mode
+
+For frontend development with hot reload:
+
+```sh
+# Terminal 1: Start frontend dev server
+cd web-ui
+npm run dev
+# Frontend runs on http://localhost:5173
+
+# Terminal 2: Run backend (pointing to dev frontend)
+# Note: You'll need to configure CORS for dev mode
+./rocksdb-cli web --db /path/to/database --port 8080
 ```
 
 #### Running Tests

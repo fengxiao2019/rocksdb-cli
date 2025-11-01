@@ -757,7 +757,7 @@ func (a *Agent) initializeLLM(config *Config) (llms.Model, error) {
 		endpoint := strings.TrimSuffix(llmConfig.AzureEndpoint, "/")
 
 		// Debug logging for Azure OpenAI configuration
-		fmt.Printf("🔧 Azure OpenAI Configuration:\n")
+		fmt.Printf("Azure OpenAI Configuration:\n")
 		fmt.Printf("   Endpoint: %s\n", llmConfig.AzureEndpoint)
 		fmt.Printf("   Deployment: %s\n", llmConfig.AzureDeployment)
 		fmt.Printf("   API Version: %s\n", llmConfig.AzureAPIVersion)
