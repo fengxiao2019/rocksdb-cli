@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // KeyFormat represents the detected format of keys in a column family
@@ -190,6 +191,84 @@ func isPrintableString(s string) bool {
 		}
 	}
 	return true
+}
+
+// IsPrintable checks if data is printable UTF-8 string
+// Returns true if data is valid UTF-8 and contains only printable characters
+func IsPrintable(data []byte) bool {
+	// Check if valid UTF-8
+	if !utf8.Valid(data) {
+		return false
+	}
+
+	// Check if all runes are printable
+	s := string(data)
+	for _, r := range s {
+		// Allow printable ASCII, tab, newline, and other printable unicode
+		if r < 32 && r != '\t' && r != '\n' && r != '\r' {
+			return false
+		}
+		// Reject control characters (except whitespace)
+		if r == 127 || (r >= 0 && r < 32 && r != '\t' && r != '\n' && r != '\r') {
+			return false
+		}
+	}
+	return true
+}
+
+// EncodeValue encodes a value, using appropriate format based on data type
+// Returns the encoded string and a flag indicating if it's binary
+func EncodeValue(data []byte) (string, bool) {
+	if IsPrintable(data) {
+		return string(data), false
+	}
+
+	// Try to format as a structured key (e.g., uint64, etc.)
+	formatted := FormatKey(string(data))
+	// If FormatKey returns something different and more readable than raw hex,
+	// it means it detected a pattern (like uint64)
+	if formatted != string(data) {
+		// Check if it's a simple hex representation
+		if len(data) == 8 {
+			// This is likely a uint64 key, FormatKey will show it as "123 (0x7b)"
+			return formatted, false // Mark as non-binary since it's now human-readable
+		}
+	}
+
+	// Use hex representation for truly binary data
+	return ToHexString(data), true
+}
+
+// ToHexString converts binary data to hex string format
+func ToHexString(data []byte) string {
+	var result strings.Builder
+	for i, b := range data {
+		if i > 0 && i%16 == 0 {
+			result.WriteString(" ")
+		}
+		result.WriteString(fmt.Sprintf("%02x", b))
+	}
+	return result.String()
+}
+
+// FromHexString converts hex string back to binary data
+func FromHexString(hexStr string) ([]byte, error) {
+	// Remove spaces
+	hexStr = strings.ReplaceAll(hexStr, " ", "")
+
+	if len(hexStr)%2 != 0 {
+		return nil, fmt.Errorf("invalid hex string length")
+	}
+
+	result := make([]byte, len(hexStr)/2)
+	for i := 0; i < len(hexStr); i += 2 {
+		val, err := strconv.ParseUint(hexStr[i:i+2], 16, 8)
+		if err != nil {
+			return nil, fmt.Errorf("invalid hex string: %v", err)
+		}
+		result[i/2] = byte(val)
+	}
+	return result, nil
 }
 
 // ConvertStringToKeyForScan converts string inputs for scan operations, handling prefixes and ranges

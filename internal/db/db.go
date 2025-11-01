@@ -82,7 +82,9 @@ type SearchOptions struct {
 type SearchResult struct {
 	Key           string   `json:"key"`
 	Value         string   `json:"value"`
-	MatchedFields []string `json:"matched_fields"` // Which fields matched (key, value, both)
+	KeyIsBinary   bool     `json:"key_is_binary"`   // true if key is base64 encoded
+	ValueIsBinary bool     `json:"value_is_binary"` // true if value is base64 encoded
+	MatchedFields []string `json:"matched_fields"`  // Which fields matched (key, value, both)
 }
 
 // SearchResults contains search results and metadata
@@ -95,11 +97,20 @@ type SearchResults struct {
 	HasMore    bool           `json:"has_more"`    // True if more results exist
 }
 
+// KeyValue represents a single key-value pair with binary encoding info
+type KeyValue struct {
+	Key          string `json:"key"`
+	Value        string `json:"value"`
+	KeyIsBinary  bool   `json:"key_is_binary"`   // true if key is base64 encoded
+	ValueIsBinary bool  `json:"value_is_binary"` // true if value is base64 encoded
+}
+
 // ScanPageResult contains paginated scan results
 // NextCursor is the last key in this page, or "" if no more
 // HasMore is true if more results exist
 type ScanPageResult struct {
-	Results    map[string]string
+	Results    map[string]string // Deprecated: use ResultsV2 for binary support
+	ResultsV2  []KeyValue        // New format with binary encoding support
 	NextCursor string
 	HasMore    bool
 }
@@ -871,7 +882,17 @@ func (d *DB) SearchCF(cf string, opts SearchOptions) (*SearchResults, error) {
 
 		// Check key pattern matching
 		if opts.KeyPattern != "" {
+			// Try to match against both raw key and formatted key
 			keyMatches = matchPattern(keyStr, opts.KeyPattern, opts.UseRegex, opts.CaseSensitive, keyRegex)
+
+			// If no match, try formatted key (for binary keys like uint64)
+			if !keyMatches {
+				formattedKey := util.FormatKey(keyStr)
+				if formattedKey != keyStr {
+					keyMatches = matchPattern(formattedKey, opts.KeyPattern, opts.UseRegex, opts.CaseSensitive, keyRegex)
+				}
+			}
+
 			if keyMatches {
 				matchedFields = append(matchedFields, "key")
 			}
@@ -902,12 +923,26 @@ func (d *DB) SearchCF(cf string, opts SearchOptions) (*SearchResults, error) {
 				displayKey = convertTickTimeToUTC(keyStr)
 			}
 
-			result := SearchResult{
-				Key:           displayKey,
-				MatchedFields: matchedFields,
-			}
+			// Encode key and value with binary detection
+			keyEncoded, keyIsBinary := util.EncodeValue(keyBytes)
+			var valueEncoded string
+			var valueIsBinary bool
 			if !opts.KeysOnly {
-				result.Value = valueStr
+				vData := v.Data()
+				valueEncoded, valueIsBinary = util.EncodeValue(vData)
+			}
+
+			// Use encoded values for display (or original for tick mode keys)
+			if opts.Tick {
+				keyEncoded = displayKey
+			}
+
+			result := SearchResult{
+				Key:           keyEncoded,
+				Value:         valueEncoded,
+				KeyIsBinary:   keyIsBinary && !opts.Tick, // Don't mark as binary if converted to tick time
+				ValueIsBinary: valueIsBinary,
+				MatchedFields: matchedFields,
 			}
 			results.Results = append(results.Results, result)
 			lastKey = keyStr
@@ -1239,9 +1274,13 @@ func (d *DB) ScanCFPage(cf string, start, end []byte, opts ScanOptions) (ScanPag
 		return ScanPageResult{Results: map[string]string{}, NextCursor: "", HasMore: false}, nil
 	}
 
+	// New resultsV2 with binary support
+	resultsV2 := make([]KeyValue, 0, opts.Limit)
+
 	for it.Valid() {
 		k := it.Key()
-		kStr := string(k.Data())
+		kData := k.Data()
+		kStr := string(kData)
 
 		// Check bounds
 		if opts.Reverse {
@@ -1266,13 +1305,32 @@ func (d *DB) ScanCFPage(cf string, start, end []byte, opts ScanOptions) (ScanPag
 			}
 		}
 
+		// Encode key with binary detection
+		keyEncoded, keyIsBinary := util.EncodeValue(kData)
+
+		var valueEncoded string
+		var valueIsBinary bool
+
 		if opts.Values {
 			v := it.Value()
-			result[kStr] = string(v.Data())
+			vData := v.Data()
+			valueEncoded, valueIsBinary = util.EncodeValue(vData)
+			result[kStr] = string(vData) // Keep old format for compatibility
 			v.Free()
 		} else {
 			result[kStr] = ""
+			valueEncoded = ""
+			valueIsBinary = false
 		}
+
+		// Add to new format
+		resultsV2 = append(resultsV2, KeyValue{
+			Key:           keyEncoded,
+			Value:         valueEncoded,
+			KeyIsBinary:   keyIsBinary,
+			ValueIsBinary: valueIsBinary,
+		})
+
 		lastKey = kStr
 		count++
 		k.Free()
@@ -1299,6 +1357,7 @@ func (d *DB) ScanCFPage(cf string, start, end []byte, opts ScanOptions) (ScanPag
 
 	return ScanPageResult{
 		Results:    result,
+		ResultsV2:  resultsV2,
 		NextCursor: nextCursor,
 		HasMore:    hasMore,
 	}, nil

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"sort"
@@ -11,12 +12,15 @@ import (
 	"syscall"
 	"time"
 
+	"rocksdb-cli/internal/api"
 	"rocksdb-cli/internal/db"
 	"rocksdb-cli/internal/graphchain"
 	"rocksdb-cli/internal/jsonutil"
 	"rocksdb-cli/internal/repl"
+	"rocksdb-cli/internal/service"
 	"rocksdb-cli/internal/transform"
 	"rocksdb-cli/internal/util"
+	"rocksdb-cli/internal/webui"
 
 	"github.com/spf13/cobra"
 )
@@ -90,7 +94,9 @@ var getCmd = &cobra.Command{
 		cf := getColumnFamily(cmd)
 		key := args[0]
 
-		value, err := rdb.GetCF(cf, key)
+		// Use DatabaseService instead of direct DB access
+		dbService := service.NewDatabaseService(rdb)
+		value, err := dbService.GetValue(cf, key)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
@@ -110,17 +116,18 @@ var putCmd = &cobra.Command{
 		rdb := openDatabase()
 		defer rdb.Close()
 
-		if rdb.IsReadOnly() {
-			fmt.Println("Error: Database is in read-only mode")
-			os.Exit(1)
-		}
-
 		cf := getColumnFamily(cmd)
 		key, value := args[0], args[1]
 
-		err := rdb.PutCF(cf, key, value)
+		// Use DatabaseService instead of direct DB access
+		dbService := service.NewDatabaseService(rdb)
+		err := dbService.PutValue(cf, key, value)
 		if err != nil {
-			fmt.Printf("Error: %v\n", err)
+			if err == db.ErrReadOnlyMode {
+				fmt.Println("Error: Database is in read-only mode")
+			} else {
+				fmt.Printf("Error: %v\n", err)
+			}
 			os.Exit(1)
 		}
 
@@ -138,7 +145,9 @@ var lastCmd = &cobra.Command{
 
 		cf := getColumnFamily(cmd)
 
-		key, value, err := rdb.GetLastCF(cf)
+		// Use DatabaseService instead of direct DB access
+		dbService := service.NewDatabaseService(rdb)
+		key, value, err := dbService.GetLastEntry(cf)
 		if err != nil {
 			fmt.Printf("Error: %v\n", err)
 			os.Exit(1)
@@ -333,9 +342,12 @@ var statsCmd = &cobra.Command{
 
 		cf, _ := cmd.Flags().GetString("cf")
 
+		// Use StatsService instead of direct DB access
+		statsService := service.NewStatsService(rdb)
+
 		if cf == "" {
 			// Database-wide stats
-			stats, err := rdb.GetDatabaseStats()
+			stats, err := statsService.GetDatabaseStats()
 			if err != nil {
 				fmt.Printf("Failed to get database stats: %v\n", err)
 				os.Exit(1)
@@ -361,7 +373,7 @@ var statsCmd = &cobra.Command{
 			}
 		} else {
 			// Column family stats
-			stats, err := rdb.GetCFStats(cf)
+			stats, err := statsService.GetColumnFamilyStats(cf)
 			if err != nil {
 				fmt.Printf("Failed to get stats for column family '%s': %v\n", cf, err)
 				os.Exit(1)
@@ -420,17 +432,19 @@ var jsonqueryCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		result, err := rdb.JSONQueryCF(cf, field, value)
+		// Use SearchService instead of direct DB access
+		searchService := service.NewSearchService(rdb)
+		result, err := searchService.JSONQuery(cf, field, value)
 		if err != nil {
 			fmt.Printf("JSON query failed: %v\n", err)
 			os.Exit(1)
 		}
 
-		if len(result) == 0 {
+		if result.Count == 0 {
 			fmt.Printf("No entries found in '%s' where field '%s' = '%s'\n", cf, field, value)
 		} else {
-			fmt.Printf("Found %d entries in '%s' where field '%s' = '%s':\n", len(result), cf, field, value)
-			for k, v := range result {
+			fmt.Printf("Found %d entries in '%s' where field '%s' = '%s':\n", result.Count, cf, field, value)
+			for k, v := range result.Data {
 				fmt.Printf("%s: %s\n", util.FormatKey(k), formatValue(v, pretty))
 			}
 		}
@@ -445,7 +459,9 @@ var listcfCmd = &cobra.Command{
 		rdb := openDatabase()
 		defer rdb.Close()
 
-		cfs, err := rdb.ListCFs()
+		// Use DatabaseService instead of direct DB access
+		dbService := service.NewDatabaseService(rdb)
+		cfs, err := dbService.ListColumnFamilies()
 		if err != nil {
 			fmt.Printf("Error listing column families: %v\n", err)
 			os.Exit(1)
@@ -676,6 +692,72 @@ CONTEXT VARIABLES (available in expressions):
 	},
 }
 
+// Web command - starts web server with embedded UI
+var webCmd = &cobra.Command{
+	Use:   "web",
+	Short: "Start web UI server (all-in-one binary)",
+	Long: `Start web server with embedded Web UI for database management.
+
+DESCRIPTION:
+  Launch a web server with full API and modern Web UI interface.
+  Everything is bundled in a single binary - no external dependencies.
+
+FEATURES:
+  - Browse and search data with intuitive UI
+  - Advanced search with regex support
+  - Export data to CSV/JSON formats
+  - Real-time data viewing with pagination
+  - Binary data support with hex encoding
+  - JSON tree visualization
+
+QUICK START:
+  # Start web UI on default port 8080
+  rocksdb-cli web --db /path/to/database
+
+  # Use custom port
+  rocksdb-cli web --db mydb --port 3000
+
+  # Read-only mode (recommended for production)
+  rocksdb-cli web --db mydb --read-only
+
+  Then open http://localhost:8080 in your browser
+
+ENDPOINTS:
+  /                - Web UI (React application)
+  /api/v1/health   - Health check
+  /api/v1/cf       - List column families
+  /api/v1/stats    - Database statistics
+  And more...`,
+	Run: func(cmd *cobra.Command, args []string) {
+		// Open database
+		rdb := openDatabase()
+		defer rdb.Close()
+
+		port, _ := cmd.Flags().GetString("port")
+
+		// Get embedded static files
+		staticFS, err := webui.GetDistFS()
+		if err != nil {
+			log.Fatalf("Failed to load embedded Web UI: %v", err)
+		}
+
+		// Setup router with embedded UI
+		router := api.SetupRouterWithUI(rdb, staticFS)
+
+		addr := ":" + port
+		fmt.Printf("\n🚀 RocksDB Web UI Server starting...\n")
+		fmt.Printf("   Database: %s\n", dbPath)
+		fmt.Printf("   Read-only: %v\n", readOnly)
+		fmt.Printf("   URL: http://localhost%s\n", addr)
+		fmt.Printf("\n💡 Open http://localhost%s in your browser\n\n", addr)
+
+		// Start server
+		if err := router.Run(addr); err != nil {
+			log.Fatalf("Failed to start server: %v", err)
+		}
+	},
+}
+
 // Helper functions
 func openDatabase() db.KeyValueDB {
 	var rdb db.KeyValueDB
@@ -722,29 +804,29 @@ func executeScan(rdb db.KeyValueDB, cf string, start, end *string, limit int, re
 		endStr = *end
 	}
 
-	// Set up scan options
-	opts := db.ScanOptions{
-		Values:  !keysOnly,
-		Reverse: reverse,
-	}
-	if limit > 0 {
-		opts.Limit = limit
+	// Use ScanService instead of direct DB access
+	scanService := service.NewScanService(rdb)
+	opts := service.ScanOptions{
+		StartKey: startStr,
+		EndKey:   endStr,
+		Limit:    limit,
+		Reverse:  reverse,
+		KeysOnly: keysOnly,
 	}
 
-	// Use smart scan for automatic key conversion
-	results, err := rdb.SmartScanCF(cf, startStr, endStr, opts)
+	result, err := scanService.Scan(cf, opts)
 	if err != nil {
 		return err
 	}
 
-	if len(results) == 0 {
+	if result.Count == 0 {
 		fmt.Printf("No entries found in column family '%s'\n", cf)
 		return nil
 	}
 
-	fmt.Printf("Found %d entries in column family '%s':\n", len(results), cf)
+	fmt.Printf("Found %d entries in column family '%s':\n", result.Count, cf)
 	i := 1
-	for k, v := range results {
+	for k, v := range result.Data {
 		fmt.Printf("[%d] Key: %s\n", i, util.FormatKey(k))
 		if !keysOnly {
 			fmt.Printf("    Value: %s\n", formatValue(v, pretty))
@@ -758,19 +840,21 @@ func executeScan(rdb db.KeyValueDB, cf string, start, end *string, limit int, re
 
 // executePrefix executes a prefix scan operation
 func executePrefix(rdb db.KeyValueDB, cf, prefix string, pretty bool) error {
-	results, err := rdb.SmartPrefixScanCF(cf, prefix, 0) // 0 means no limit
+	// Use ScanService instead of direct DB access
+	scanService := service.NewScanService(rdb)
+	result, err := scanService.PrefixScan(cf, prefix, 0) // 0 means no limit
 	if err != nil {
 		return err
 	}
 
-	if len(results) == 0 {
+	if result.Count == 0 {
 		fmt.Printf("No entries found with prefix '%s' in column family '%s'\n", prefix, cf)
 		return nil
 	}
 
-	fmt.Printf("Found %d entries with prefix '%s' in column family '%s':\n", len(results), prefix, cf)
+	fmt.Printf("Found %d entries with prefix '%s' in column family '%s':\n", result.Count, prefix, cf)
 	i := 1
-	for k, v := range results {
+	for k, v := range result.Data {
 		fmt.Printf("[%d] Key: %s\n", i, util.FormatKey(k))
 		fmt.Printf("    Value: %s\n", formatValue(v, pretty))
 		fmt.Println()
@@ -782,21 +866,33 @@ func executePrefix(rdb db.KeyValueDB, cf, prefix string, pretty bool) error {
 
 // executeSearch executes a fuzzy search operation
 func executeSearch(rdb db.KeyValueDB, cf, keyPattern, valuePattern string, useRegex, caseSensitive, keysOnly, tick bool, limit int, pretty bool, after, exportFile, exportSep string) error {
-	opts := db.SearchOptions{
+	// Use SearchService instead of direct DB access
+	searchService := service.NewSearchService(rdb)
+
+	opts := service.SearchOptions{
 		KeyPattern:    keyPattern,
 		ValuePattern:  valuePattern,
 		UseRegex:      useRegex,
 		CaseSensitive: caseSensitive,
 		KeysOnly:      keysOnly,
-		Tick:          tick,
 		Limit:         limit,
 		After:         after,
 	}
 
-	// Handle export
+	// Handle export (still use direct DB access for now as ExportService needs enhancement)
 	if exportFile != "" {
 		sep := parseSep(exportSep)
-		err := rdb.ExportSearchResultsToCSV(cf, exportFile, sep, opts)
+		dbOpts := db.SearchOptions{
+			KeyPattern:    keyPattern,
+			ValuePattern:  valuePattern,
+			UseRegex:      useRegex,
+			CaseSensitive: caseSensitive,
+			KeysOnly:      keysOnly,
+			Tick:          tick,
+			Limit:         limit,
+			After:         after,
+		}
+		err := rdb.ExportSearchResultsToCSV(cf, exportFile, sep, dbOpts)
 		if err != nil {
 			return err
 		}
@@ -805,17 +901,17 @@ func executeSearch(rdb db.KeyValueDB, cf, keyPattern, valuePattern string, useRe
 	}
 
 	// Execute search
-	results, err := rdb.SearchCF(cf, opts)
+	results, err := searchService.Search(cf, opts)
 	if err != nil {
 		return err
 	}
 
-	if len(results.Results) == 0 {
+	if results.Count == 0 {
 		fmt.Printf("No matches found in column family '%s'\n", cf)
 		return nil
 	}
 
-	fmt.Printf("Found %d matches in column family '%s' (query time: %s)\n\n", len(results.Results), cf, results.QueryTime)
+	fmt.Printf("Found %d matches in column family '%s' (query time: %s)\n\n", results.Count, cf, results.QueryTime)
 
 	for i, result := range results.Results {
 		fmt.Printf("[%d] Key: %s\n", i+1, result.Key)
@@ -1001,6 +1097,9 @@ func init() {
 	transformCmd.Flags().Int("batch-size", 1000, "Internal batch size for processing")
 	transformCmd.Flags().Bool("verbose", false, "Show detailed progress information")
 
+	// Web command specific flags
+	webCmd.Flags().String("port", "8080", "Port to listen on")
+
 	// Add all commands to root
 	rootCmd.AddCommand(replCmd)
 	rootCmd.AddCommand(getCmd)
@@ -1019,6 +1118,7 @@ func init() {
 	rootCmd.AddCommand(dropcfCmd)
 	rootCmd.AddCommand(aiCmd)
 	rootCmd.AddCommand(transformCmd)
+	rootCmd.AddCommand(webCmd)
 
 	// Mark required flags
 	rootCmd.MarkPersistentFlagRequired("db")

@@ -1,0 +1,62 @@
+/* Custom styles for JSON viewer */
+.json-view-container {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.json-view-item {
+  margin-left: 20px;
+}
+
+.json-view-label {
+  color: #0066cc;
+  font-weight: 500;
+}
+
+.json-view-null,
+.json-view-undefined {
+  color: #999999;
+  font-style: italic;
+}
+
+.json-view-number {
+  color: #098658;
+}
+
+.json-view-string {
+  color: #d14;
+}
+
+.json-view-boolean {
+  color: #0066cc;
+  font-weight: 500;
+}
+
+.json-view-other {
+  color: #333333;
+}
+
+.json-view-punctuation {
+  color: #666666;
+}
+
+/* Expandable arrow styling */
+.json-view-container button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  margin-right: 4px;
+  color: #666666;
+  font-size: 12px;
+}
+
+.json-view-container button:hover {
+  color: #0066cc;
+}
+
+/* Make arrays and objects more readable */
+.json-view-container > div {
+  margin-bottom: 4px;
+}

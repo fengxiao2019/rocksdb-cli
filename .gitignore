@@ -66,3 +66,24 @@ __pycache__/
 *.pyd
 .Python
 test_*.py
+
+# Documentation (intermediate/work-in-progress docs)
+docs/ARCHITECTURE_DECISIONS.md
+docs/CLI_MIGRATION_GUIDE.md
+docs/CLI_REFACTORING_COMPLETED.md
+docs/CODE_REFACTORING_PLAN.md
+docs/SERVICE_LAYER_IMPLEMENTATION.md
+docs/WEB_API_DOCUMENTATION.md
+docs/WEB_API_IMPLEMENTATION.md
+docs/WEB_UI_ARCHITECTURE.md
+docs/WEB_UI_MVP_ROADMAP.md
+docs/WEB_UI_USE_CASES.md
+
+# Web UI - Node.js
+node_modules/
+package-lock.json
+web-ui/node_modules/
+web-ui/dist/
+
+# Web server binary
+rocksdb-web-server
