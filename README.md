@@ -344,11 +344,15 @@ Create a configuration file (default: `config/graphchain.yaml`):
 ```yaml
 graphchain:
   llm:
-    provider: "ollama"              # openai, googleai, ollama
+    provider: "ollama"              # openai, googleai, ollama, azureopenai
     model: "llama2"                 # Model name
     api_key: "${OPENAI_API_KEY}"    # API key (not needed for Ollama)
     base_url: "http://localhost:11434"  # Ollama URL
     timeout: "30s"                  # Request timeout
+    # Azure OpenAI specific (only when provider: azureopenai)
+    # azure_endpoint: "https://your-resource.openai.azure.com"
+    # azure_deployment: "gpt-4"
+    # azure_api_version: "2024-02-01"
   
   agent:
     max_iterations: 10              # Max tool iterations
@@ -455,6 +459,28 @@ graphchain:
     model: "gemini-pro"
     api_key: "${GOOGLE_AI_API_KEY}"
 ```
+
+#### 4. Azure OpenAI
+```bash
+export AZURE_OPENAI_API_KEY="your-api-key-here"
+```
+
+**Configuration:**
+```yaml
+graphchain:
+  llm:
+    provider: "azureopenai"
+    model: "gpt-4"  # Not used, deployment name is used instead
+    api_key: "${AZURE_OPENAI_API_KEY}"
+    azure_endpoint: "https://your-resource.openai.azure.com"
+    azure_deployment: "gpt-4"  # Your deployment name
+    azure_api_version: "2024-02-01"  # Optional, defaults to 2024-02-01
+```
+
+**Notes:**
+- Azure OpenAI requires three additional fields: `azure_endpoint`, `azure_deployment`, and optionally `azure_api_version`
+- The `azure_deployment` is the name of your deployed model in Azure
+- You can find your endpoint and deployment names in the Azure Portal
 
 ### GraphChain Agent Features
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"rocksdb-cli/internal/db"
+	"rocksdb-cli/internal/service"
 )
 
 // ToolInput represents the input structure for tools
@@ -66,11 +67,11 @@ func getBool(args map[string]interface{}, key string) bool {
 
 // GetValueTool implements tools.Tool interface for getting values
 type GetValueTool struct {
-	db *db.DB
+	dbService *service.DatabaseService
 }
 
-func NewGetValueTool(database *db.DB) *GetValueTool {
-	return &GetValueTool{db: database}
+func NewGetValueTool(dbService *service.DatabaseService) *GetValueTool {
+	return &GetValueTool{dbService: dbService}
 }
 
 func (t *GetValueTool) Call(ctx context.Context, input string) (string, error) {
@@ -89,7 +90,7 @@ func (t *GetValueTool) Call(ctx context.Context, input string) (string, error) {
 		cf = "default"
 	}
 
-	value, err := t.db.GetCF(cf, key)
+	value, err := t.dbService.GetValue(cf, key)
 	if err != nil {
 		return "", fmt.Errorf("failed to get value: %w", err)
 	}
@@ -105,7 +106,7 @@ func (t *GetValueTool) Call(ctx context.Context, input string) (string, error) {
 }
 
 func (t *GetValueTool) Name() string {
-	return "get_value"
+	return "get_value_by_key"
 }
 
 func (t *GetValueTool) Description() string {
@@ -120,11 +121,11 @@ Returns: JSON {key, value, column_family}`
 
 // PutValueTool implements tools.Tool interface for putting values
 type PutValueTool struct {
-	db *db.DB
+	dbService *service.DatabaseService
 }
 
-func NewPutValueTool(database *db.DB) *PutValueTool {
-	return &PutValueTool{db: database}
+func NewPutValueTool(dbService *service.DatabaseService) *PutValueTool {
+	return &PutValueTool{dbService: dbService}
 }
 
 func (t *PutValueTool) Call(ctx context.Context, input string) (string, error) {
@@ -144,7 +145,7 @@ func (t *PutValueTool) Call(ctx context.Context, input string) (string, error) {
 		cf = "default"
 	}
 
-	err = t.db.PutCF(cf, key, value)
+	err = t.dbService.PutValue(cf, key, value)
 	if err != nil {
 		return "", fmt.Errorf("failed to put value: %w", err)
 	}
@@ -177,11 +178,11 @@ Returns: JSON {success, key, value, column_family}`
 
 // ScanRangeTool implements tools.Tool interface for range scanning
 type ScanRangeTool struct {
-	db *db.DB
+	scanService *service.ScanService
 }
 
-func NewScanRangeTool(database *db.DB) *ScanRangeTool {
-	return &ScanRangeTool{db: database}
+func NewScanRangeTool(scanService *service.ScanService) *ScanRangeTool {
+	return &ScanRangeTool{scanService: scanService}
 }
 
 func (t *ScanRangeTool) Call(ctx context.Context, input string) (string, error) {
@@ -204,20 +205,22 @@ func (t *ScanRangeTool) Call(ctx context.Context, input string) (string, error) 
 
 	reverse := getBool(toolInput.Args, "reverse")
 
-	opts := db.ScanOptions{
-		Limit:   limit,
-		Reverse: reverse,
-		Values:  true,
+	opts := service.ScanOptions{
+		StartKey: startKey,
+		EndKey:   endKey,
+		Limit:    limit,
+		Reverse:  reverse,
+		KeysOnly: false,
 	}
 
-	results, err := t.db.ScanCF(cf, []byte(startKey), []byte(endKey), opts)
+	scanResult, err := t.scanService.Scan(cf, opts)
 	if err != nil {
 		return "", fmt.Errorf("failed to scan range: %w", err)
 	}
 
 	result := map[string]interface{}{
-		"results":       results,
-		"count":         len(results),
+		"results":       scanResult.Data,
+		"count":         scanResult.Count,
 		"start_key":     startKey,
 		"end_key":       endKey,
 		"column_family": cf,
@@ -230,7 +233,7 @@ func (t *ScanRangeTool) Call(ctx context.Context, input string) (string, error) 
 }
 
 func (t *ScanRangeTool) Name() string {
-	return "scan_range"
+	return "scan_keys_in_range"
 }
 
 // 优化描述：强调 scan_range 可用于全量遍历，prefix_scan 仅用于特定前缀，便于 LLM 区分
@@ -257,11 +260,11 @@ Example: To get all keys from 'users', set start_key="", end_key="", column_fami
 
 // PrefixScanTool implements tools.Tool interface for prefix scanning
 type PrefixScanTool struct {
-	db *db.DB
+	scanService *service.ScanService
 }
 
-func NewPrefixScanTool(database *db.DB) *PrefixScanTool {
-	return &PrefixScanTool{db: database}
+func NewPrefixScanTool(scanService *service.ScanService) *PrefixScanTool {
+	return &PrefixScanTool{scanService: scanService}
 }
 
 func (t *PrefixScanTool) Call(ctx context.Context, input string) (string, error) {
@@ -285,14 +288,14 @@ func (t *PrefixScanTool) Call(ctx context.Context, input string) (string, error)
 		limit = 10
 	}
 
-	results, err := t.db.PrefixScanCF(cf, prefix, limit)
+	scanResult, err := t.scanService.PrefixScan(cf, prefix, limit)
 	if err != nil {
 		return "", fmt.Errorf("failed to scan prefix: %w", err)
 	}
 
 	result := map[string]interface{}{
-		"results":       results,
-		"count":         len(results),
+		"results":       scanResult.Data,
+		"count":         scanResult.Count,
 		"prefix":        prefix,
 		"column_family": cf,
 		"limit":         limit,
@@ -303,7 +306,7 @@ func (t *PrefixScanTool) Call(ctx context.Context, input string) (string, error)
 }
 
 func (t *PrefixScanTool) Name() string {
-	return "prefix_scan"
+	return "scan_keys_with_prefix"
 }
 
 // 优化描述：prefix_scan 仅用于前缀批量查询，避免误用
@@ -328,15 +331,15 @@ Example: To get all keys starting with "user:", set prefix="user:".
 
 // ListColumnFamiliesTool implements tools.Tool interface for listing column families
 type ListColumnFamiliesTool struct {
-	db *db.DB
+	dbService *service.DatabaseService
 }
 
-func NewListColumnFamiliesTool(database *db.DB) *ListColumnFamiliesTool {
-	return &ListColumnFamiliesTool{db: database}
+func NewListColumnFamiliesTool(dbService *service.DatabaseService) *ListColumnFamiliesTool {
+	return &ListColumnFamiliesTool{dbService: dbService}
 }
 
 func (t *ListColumnFamiliesTool) Call(ctx context.Context, input string) (string, error) {
-	cfs, err := t.db.ListCFs()
+	cfs, err := t.dbService.ListColumnFamilies()
 	if err != nil {
 		return "", fmt.Errorf("failed to list column families: %w", err)
 	}
@@ -362,11 +365,11 @@ Returns: JSON {column_families, count}`
 
 // GetLastTool implements tools.Tool interface for getting the last key-value pair
 type GetLastTool struct {
-	db *db.DB
+	dbService *service.DatabaseService
 }
 
-func NewGetLastTool(database *db.DB) *GetLastTool {
-	return &GetLastTool{db: database}
+func NewGetLastTool(dbService *service.DatabaseService) *GetLastTool {
+	return &GetLastTool{dbService: dbService}
 }
 
 func (t *GetLastTool) Call(ctx context.Context, input string) (string, error) {
@@ -380,7 +383,7 @@ func (t *GetLastTool) Call(ctx context.Context, input string) (string, error) {
 		cf = "default"
 	}
 
-	key, value, err := t.db.GetLastCF(cf)
+	key, value, err := t.dbService.GetLastEntry(cf)
 	if err != nil {
 		return "", fmt.Errorf("failed to get last entry: %w", err)
 	}
@@ -396,12 +399,13 @@ func (t *GetLastTool) Call(ctx context.Context, input string) (string, error) {
 }
 
 func (t *GetLastTool) Name() string {
-	return "get_last"
+	return "get_last_entry_in_column_family"
 }
 
 func (t *GetLastTool) Description() string {
-	return `Get the last key-value pair.
-Get last key-value pair in a column family.
+	return `Get THE LAST (final/最后的) single key-value entry from a column family.
+获取列族中最后一条记录（只返回一条）。
+Returns: ONE single key-value pair (NOT multiple, NOT a list).
 Args:
   - column_family (string, optional, default: "default")
 Returns: JSON {key, value, column_family}`
@@ -409,11 +413,11 @@ Returns: JSON {key, value, column_family}`
 
 // JSONQueryTool implements tools.Tool interface for JSON field queries
 type JSONQueryTool struct {
-	db *db.DB
+	searchService *service.SearchService
 }
 
-func NewJSONQueryTool(database *db.DB) *JSONQueryTool {
-	return &JSONQueryTool{db: database}
+func NewJSONQueryTool(searchService *service.SearchService) *JSONQueryTool {
+	return &JSONQueryTool{searchService: searchService}
 }
 
 func (t *JSONQueryTool) Call(ctx context.Context, input string) (string, error) {
@@ -433,14 +437,14 @@ func (t *JSONQueryTool) Call(ctx context.Context, input string) (string, error) 
 		cf = "default"
 	}
 
-	results, err := t.db.JSONQueryCF(cf, field, value)
+	queryResult, err := t.searchService.JSONQuery(cf, field, value)
 	if err != nil {
 		return "", fmt.Errorf("failed to query JSON: %w", err)
 	}
 
 	result := map[string]interface{}{
-		"results":       results,
-		"count":         len(results),
+		"results":       queryResult.Data,
+		"count":         queryResult.Count,
 		"field":         field,
 		"value":         value,
 		"column_family": cf,
@@ -451,7 +455,7 @@ func (t *JSONQueryTool) Call(ctx context.Context, input string) (string, error) 
 }
 
 func (t *JSONQueryTool) Name() string {
-	return "json_query"
+	return "query_json_field"
 }
 
 func (t *JSONQueryTool) Description() string {
@@ -467,15 +471,15 @@ Returns: JSON {results, count, field, value, column_family}`
 
 // GetStatsTool implements tools.Tool interface for getting database statistics
 type GetStatsTool struct {
-	db *db.DB
+	statsService *service.StatsService
 }
 
-func NewGetStatsTool(database *db.DB) *GetStatsTool {
-	return &GetStatsTool{db: database}
+func NewGetStatsTool(statsService *service.StatsService) *GetStatsTool {
+	return &GetStatsTool{statsService: statsService}
 }
 
 func (t *GetStatsTool) Call(ctx context.Context, input string) (string, error) {
-	stats, err := t.db.GetDatabaseStats()
+	stats, err := t.statsService.GetDatabaseStats()
 	if err != nil {
 		return "", fmt.Errorf("failed to get stats: %w", err)
 	}
@@ -489,7 +493,7 @@ func (t *GetStatsTool) Call(ctx context.Context, input string) (string, error) {
 }
 
 func (t *GetStatsTool) Name() string {
-	return "get_stats"
+	return "get_database_stats"
 }
 
 func (t *GetStatsTool) Description() string {
@@ -501,11 +505,11 @@ Returns: JSON {stats}`
 
 // SearchTool implements tools.Tool interface for complex search
 type SearchTool struct {
-	db *db.DB
+	searchService *service.SearchService
 }
 
-func NewSearchTool(database *db.DB) *SearchTool {
-	return &SearchTool{db: database}
+func NewSearchTool(searchService *service.SearchService) *SearchTool {
+	return &SearchTool{searchService: searchService}
 }
 
 func (t *SearchTool) Call(ctx context.Context, input string) (string, error) {
@@ -527,7 +531,7 @@ func (t *SearchTool) Call(ctx context.Context, input string) (string, error) {
 	}
 	after := getString(args, "after")
 
-	opts := db.SearchOptions{
+	opts := service.SearchOptions{
 		KeyPattern:    keyPattern,
 		ValuePattern:  valuePattern,
 		UseRegex:      useRegex,
@@ -536,27 +540,27 @@ func (t *SearchTool) Call(ctx context.Context, input string) (string, error) {
 		KeysOnly:      false,
 		After:         after,
 	}
-	results, err := t.db.SearchCF(cf, opts)
+	searchResult, err := t.searchService.Search(cf, opts)
 	if err != nil {
 		return "", fmt.Errorf("search failed: %w", err)
 	}
 	// 组装结果
 	resultMap := make(map[string]string)
-	for _, r := range results.Results {
+	for _, r := range searchResult.Results {
 		resultMap[r.Key] = r.Value
 	}
 	result := map[string]interface{}{
 		"results":     resultMap,
-		"count":       len(resultMap),
-		"next_cursor": results.NextCursor,
-		"has_more":    results.HasMore,
+		"count":       searchResult.Count,
+		"next_cursor": searchResult.NextCursor,
+		"has_more":    searchResult.HasMore,
 	}
 	resultBytes, _ := json.Marshal(result)
 	return string(resultBytes), nil
 }
 
 func (t *SearchTool) Name() string {
-	return "search"
+	return "search_keys_and_values"
 }
 
 func (t *SearchTool) Description() string {
@@ -574,17 +578,21 @@ Returns: JSON {results, count, next_cursor, has_more}`
 
 // CreateRocksDBTools creates all RocksDB tools for the agent
 func CreateRocksDBTools(database *db.DB) []interface{} {
-	// Note: Using interface{} here because tools.Tool interface might be different
-	// We'll need to import the correct tools package
+	// Create services
+	dbService := service.NewDatabaseService(database)
+	scanService := service.NewScanService(database)
+	searchService := service.NewSearchService(database)
+	statsService := service.NewStatsService(database)
+
 	return []interface{}{
-		NewGetValueTool(database),
-		NewPutValueTool(database),
-		NewScanRangeTool(database),
-		NewPrefixScanTool(database),
-		NewListColumnFamiliesTool(database),
-		NewGetLastTool(database),
-		NewJSONQueryTool(database),
-		NewGetStatsTool(database),
-		NewSearchTool(database),
+		NewGetValueTool(dbService),
+		NewPutValueTool(dbService),
+		NewScanRangeTool(scanService),
+		NewPrefixScanTool(scanService),
+		NewListColumnFamiliesTool(dbService),
+		NewGetLastTool(dbService),
+		NewJSONQueryTool(searchService),
+		NewGetStatsTool(statsService),
+		NewSearchTool(searchService),
 	}
 }

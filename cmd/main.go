@@ -739,6 +739,7 @@ ENDPOINTS:
 		defer rdb.Close()
 
 		port, _ := cmd.Flags().GetString("port")
+		enableAI, _ := cmd.Flags().GetBool("enable-ai")
 
 		// Get embedded static files
 		staticFS, err := webui.GetDistFS()
@@ -746,13 +747,38 @@ ENDPOINTS:
 			log.Fatalf("Failed to load embedded Web UI: %v", err)
 		}
 
-		// Setup router with embedded UI
-		router := api.SetupRouterWithUI(rdb, staticFS)
+		// Initialize AI agent if enabled
+		var aiAgent interface{}
+		if enableAI {
+			// Type assert to *db.DB
+			dbInstance, ok := rdb.(*db.DB)
+			if !ok {
+				log.Fatalf("AI requires a real DB instance, got %T", rdb)
+			}
+
+			agent := graphchain.NewAgent(dbInstance)
+			cfg, err := graphchain.LoadConfig(configPath)
+			if err != nil {
+				// Use default config if file doesn't exist
+				cfg = graphchain.DefaultConfig()
+				fmt.Printf("⚠️  Using default GraphChain config (AI may not work without proper LLM setup)\n")
+			}
+
+			if err := agent.Initialize(context.Background(), cfg); err != nil {
+				log.Fatalf("Failed to initialize AI agent: %v", err)
+			}
+			aiAgent = agent
+			fmt.Printf("🤖 AI Assistant enabled (GraphChain)\n")
+		}
+
+		// Setup router with embedded UI and optional AI
+		router := api.SetupRouterWithUI(rdb, staticFS, aiAgent)
 
 		addr := ":" + port
 		fmt.Printf("\n🚀 RocksDB Web UI Server starting...\n")
 		fmt.Printf("   Database: %s\n", dbPath)
 		fmt.Printf("   Read-only: %v\n", readOnly)
+		fmt.Printf("   AI Enabled: %v\n", enableAI)
 		fmt.Printf("   URL: http://localhost%s\n", addr)
 		fmt.Printf("\n💡 Open http://localhost%s in your browser\n\n", addr)
 
@@ -1104,6 +1130,7 @@ func init() {
 
 	// Web command specific flags
 	webCmd.Flags().String("port", "8080", "Port to listen on")
+	webCmd.Flags().Bool("enable-ai", false, "Enable AI assistant powered by GraphChain")
 
 	// Add all commands to root
 	rootCmd.AddCommand(replCmd)

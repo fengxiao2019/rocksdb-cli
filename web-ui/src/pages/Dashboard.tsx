@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useDbStore } from '@/stores/dbStore';
 import { listColumnFamilies, scanData, searchData } from '@/api/database';
+import { aiAPI } from '@/api/ai';
 import type { ScanResult, SearchRequest, SearchResponse } from '@/types/api';
 import ViewModal from '@/components/shared/ViewModal';
 import SearchPanel from '@/components/shared/SearchPanel';
 import ExportModal from '@/components/shared/ExportModal';
+import { AIAssistant } from '@/components/shared/AIAssistant';
 
 export default function Dashboard() {
   const {currentCF, columnFamilies, setCurrentCF, setColumnFamilies} = useDbStore();
@@ -17,10 +19,22 @@ export default function Dashboard() {
   const [showSearch, setShowSearch] = useState(false);
   const [isSearchMode, setIsSearchMode] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [showAI, setShowAI] = useState(false);
+  const [aiEnabled, setAIEnabled] = useState(false);
 
   useEffect(() => {
     loadColumnFamilies();
+    checkAI();
   }, []);
+
+  const checkAI = async () => {
+    try {
+      const health = await aiAPI.checkHealth();
+      setAIEnabled(health.ai_enabled);
+    } catch {
+      setAIEnabled(false);
+    }
+  };
 
   useEffect(() => {
     if (currentCF) {
@@ -217,6 +231,17 @@ export default function Dashboard() {
                 </p>
               </div>
               <div className="flex gap-2">
+                {aiEnabled && (
+                  <button
+                    onClick={() => setShowAI(true)}
+                    className="px-4 py-2 text-sm font-medium text-white bg-purple-600 rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-2"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                    </svg>
+                    AI Assistant
+                  </button>
+                )}
                 {isSearchMode && (
                   <button
                     onClick={handleBackToScan}
@@ -440,6 +465,12 @@ export default function Dashboard() {
           columnFamily={currentCF}
         />
       )}
+
+      {/* AI Assistant */}
+      <AIAssistant
+        isOpen={showAI}
+        onClose={() => setShowAI(false)}
+      />
     </div>
   );
 }

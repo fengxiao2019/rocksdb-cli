@@ -88,7 +88,7 @@ func SetupRouter(database db.KeyValueDB) *gin.Engine {
 }
 
 // SetupRouterWithUI configures and returns a Gin router with API routes and embedded Web UI
-func SetupRouterWithUI(database db.KeyValueDB, staticFS fs.FS) *gin.Engine {
+func SetupRouterWithUI(database db.KeyValueDB, staticFS fs.FS, aiAgent interface{}) *gin.Engine {
 	r := gin.New()
 
 	// Global middleware
@@ -114,8 +114,9 @@ func SetupRouterWithUI(database db.KeyValueDB, staticFS fs.FS) *gin.Engine {
 		// Health check
 		v1.GET("/health", func(c *gin.Context) {
 			c.JSON(200, gin.H{
-				"status":  "ok",
-				"version": "1.0.0",
+				"status":     "ok",
+				"version":    "1.0.0",
+				"ai_enabled": aiAgent != nil,
 			})
 		})
 
@@ -142,6 +143,17 @@ func SetupRouterWithUI(database db.KeyValueDB, staticFS fs.FS) *gin.Engine {
 
 			// Stats
 			cf.GET("/stats", statsHandler.GetColumnFamilyStats)
+		}
+
+		// AI routes (optional)
+		if aiAgent != nil {
+			aiHandler := handlers.NewAIHandler(aiAgent)
+			ai := v1.Group("/ai")
+			{
+				ai.GET("/health", aiHandler.HealthCheck)
+				ai.GET("/capabilities", aiHandler.GetCapabilities)
+				ai.POST("/query", aiHandler.Query)
+			}
 		}
 	}
 

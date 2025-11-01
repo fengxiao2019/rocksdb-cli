@@ -29,6 +29,10 @@ type LLMConfig struct {
 	APIKey   string        `yaml:"api_key"`
 	BaseURL  string        `yaml:"base_url"`
 	Timeout  time.Duration `yaml:"timeout"`
+	// Azure OpenAI specific
+	AzureEndpoint   string `yaml:"azure_endpoint"`
+	AzureDeployment string `yaml:"azure_deployment"`
+	AzureAPIVersion string `yaml:"azure_api_version"`
 }
 
 // AgentConfig contains agent-specific configuration
@@ -156,6 +160,17 @@ func overrideWithEnv(config *Config) {
 		gc.LLM.BaseURL = baseURL
 	}
 
+	// Azure OpenAI specific environment overrides
+	if azureEndpoint := os.Getenv("GRAPHCHAIN_AZURE_ENDPOINT"); azureEndpoint != "" {
+		gc.LLM.AzureEndpoint = azureEndpoint
+	}
+	if azureDeployment := os.Getenv("GRAPHCHAIN_AZURE_DEPLOYMENT"); azureDeployment != "" {
+		gc.LLM.AzureDeployment = azureDeployment
+	}
+	if azureAPIVersion := os.Getenv("GRAPHCHAIN_AZURE_API_VERSION"); azureAPIVersion != "" {
+		gc.LLM.AzureAPIVersion = azureAPIVersion
+	}
+
 	// Security environment overrides
 	if readOnly := os.Getenv("GRAPHCHAIN_READ_ONLY"); readOnly != "" {
 		gc.Security.ReadOnlyMode = strings.ToLower(readOnly) == "true"
@@ -178,15 +193,29 @@ func validateConfig(config *Config) error {
 	}
 
 	// Validate supported providers
-	supportedProviders := []string{"openai", "googleai", "ollama", "anthropic", "local"}
+	supportedProviders := []string{"openai", "googleai", "ollama", "anthropic", "local", "azureopenai"}
 	if !contains(supportedProviders, gc.LLM.Provider) {
 		return fmt.Errorf("unsupported LLM provider: %s, supported: %v", gc.LLM.Provider, supportedProviders)
 	}
 
 	// Validate API key for cloud providers (ollama and local don't need API keys)
-	requiresAPIKey := []string{"openai", "googleai", "anthropic"}
+	requiresAPIKey := []string{"openai", "googleai", "anthropic", "azureopenai"}
 	if contains(requiresAPIKey, gc.LLM.Provider) && gc.LLM.APIKey == "" {
 		return fmt.Errorf("API key is required for provider: %s", gc.LLM.Provider)
+	}
+
+	// Validate Azure OpenAI specific fields
+	if gc.LLM.Provider == "azureopenai" {
+		if gc.LLM.AzureEndpoint == "" {
+			return fmt.Errorf("azure_endpoint is required for Azure OpenAI provider")
+		}
+		if gc.LLM.AzureDeployment == "" {
+			return fmt.Errorf("azure_deployment is required for Azure OpenAI provider")
+		}
+		if gc.LLM.AzureAPIVersion == "" {
+			// Set default Azure API version if not specified
+			gc.LLM.AzureAPIVersion = "2024-02-01"
+		}
 	}
 
 	// Validate numeric constraints

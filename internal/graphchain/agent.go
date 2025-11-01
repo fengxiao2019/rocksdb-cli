@@ -2,12 +2,14 @@ package graphchain
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 	"time"
 
 	"rocksdb-cli/internal/db"
+	"rocksdb-cli/internal/service"
 
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
@@ -193,15 +195,22 @@ func (a *Agent) initializeExecutor() (ExecutorInterface, error) {
 
 // createDatabaseTools creates all database tools with standard tools.Tool interface
 func (a *Agent) createDatabaseTools() []tools.Tool {
+	// Create services
+	dbService := service.NewDatabaseService(a.database)
+	scanService := service.NewScanService(a.database)
+	searchService := service.NewSearchService(a.database)
+	statsService := service.NewStatsService(a.database)
+
 	return []tools.Tool{
-		NewGetValueTool(a.database),
-		NewPutValueTool(a.database),
-		NewScanRangeTool(a.database),
-		NewPrefixScanTool(a.database),
-		NewListColumnFamiliesTool(a.database),
-		NewGetLastTool(a.database),
-		NewJSONQueryTool(a.database),
-		NewGetStatsTool(a.database),
+		NewGetValueTool(dbService),
+		NewPutValueTool(dbService),
+		NewScanRangeTool(scanService),
+		NewPrefixScanTool(scanService),
+		NewListColumnFamiliesTool(dbService),
+		NewGetLastTool(dbService),
+		NewJSONQueryTool(searchService),
+		NewGetStatsTool(statsService),
+		NewSearchTool(searchService),
 	}
 }
 
@@ -338,45 +347,128 @@ func (a *Agent) handleGetStats(query string) *QueryResult {
 	return nil
 }
 
-// processWithLLM processes the query using the LLM
+// processWithLLM processes the query using the LLM with direct function calling
 func (a *Agent) processWithLLM(ctx context.Context, query string, intent string, startTime time.Time) (*QueryResult, error) {
-	inputs := a.buildInputs(ctx, query, intent)
+	// Use direct LLM function calling instead of agent executor for better temperature control
+	// This is specifically needed for GPT-5 which requires temperature=1.0
 
-	// Execute the query using agent executor
-	result, err := a.executor.Call(ctx, inputs)
-	executionTime := time.Since(startTime)
+	// Build messages with comprehensive system prompt
+	systemPrompt := `You are a RocksDB database assistant. Use the available functions to answer user questions.
 
-	if err != nil {
-		return a.handleExecutionError(err, executionTime), nil
+INSTRUCTIONS:
+1. Read the user's question carefully
+2. Call the appropriate function with correct parameters
+3. Use the function result to answer the user's question
+4. Respond in the same language as the question
+
+PARAMETER EXTRACTION:
+- Extract column_family from patterns like "users中", "in users", "from users" → column_family="users"
+- Extract limit from patterns like "前N个", "first N", "N keys" → limit=N
+- Extract key names directly from the question
+- If no column_family specified, use "default"
+
+CRITICAL RULES:
+- The column_family parameter must match exactly what the user specifies
+- Function names are self-explanatory: use the one that matches the user's intent
+- Call only ONE function unless the first result requires clarification
+- Always include all required parameters
+
+Example pattern matching:
+"获取users中最后一条记录" → column_family="users", use get_last_entry_in_column_family
+"前10个key from products" → column_family="products", limit=10, use scan_keys_in_range with start_key="" and end_key=""
+"列出所有column families" → use list_column_families`
+
+	messages := []llms.MessageContent{
+		llms.TextParts(llms.ChatMessageTypeSystem, systemPrompt),
+		llms.TextParts(llms.ChatMessageTypeHuman, query),
 	}
 
-	// Extract output and tools used
-	var finalResult interface{} = result
+	// Convert tools to function definitions
+	functionDefs := a.convertToolsToFunctions()
+
 	var toolsUsed []string
+	var finalResponse string
+	maxIterations := 5
 
-	if output, exists := result["output"]; exists {
-		finalResult = output
+	// Function calling loop
+	for i := 0; i < maxIterations; i++ {
+		// Call LLM with functions and temperature=1.0
+		response, err := a.llm.GenerateContent(ctx, messages,
+			llms.WithTemperature(1.0),
+			llms.WithFunctions(functionDefs),
+		)
+
+		if err != nil {
+			executionTime := time.Since(startTime)
+			return a.handleExecutionError(err, executionTime), nil
+		}
+
+		// Check if LLM wants to call a function
+		if len(response.Choices) == 0 {
+			break
+		}
+
+		choice := response.Choices[0]
+
+		// If no function call, we're done
+		if choice.FuncCall == nil {
+			finalResponse = choice.Content
+			break
+		}
+
+		// Execute the function call
+		funcName := choice.FuncCall.Name
+		toolsUsed = append(toolsUsed, funcName)
+
+		funcResult, err := a.executeToolByName(ctx, funcName, choice.FuncCall.Arguments)
+		if err != nil {
+			funcResult = fmt.Sprintf("Error: %v", err)
+		}
+
+		// Add function result to messages
+		messages = append(messages,
+			llms.MessageContent{
+				Role: llms.ChatMessageTypeAI,
+				Parts: []llms.ContentPart{
+					llms.ToolCall{
+						ID:   fmt.Sprintf("call_%d", i),
+						Type: "function",
+						FunctionCall: &llms.FunctionCall{
+							Name:      funcName,
+							Arguments: choice.FuncCall.Arguments,
+						},
+					},
+				},
+			},
+			llms.MessageContent{
+				Role: llms.ChatMessageTypeTool,
+				Parts: []llms.ContentPart{
+					llms.ToolCallResponse{
+						ToolCallID: fmt.Sprintf("call_%d", i),
+						Name:       funcName,
+						Content:    funcResult,
+					},
+				},
+			},
+		)
 	}
 
-	// Extract tools used from intermediate steps
-	if intermediateSteps, exists := result["intermediate_steps"]; exists {
-		toolsUsed = a.extractToolsUsed(intermediateSteps)
-		a.printReasoningTrace(intermediateSteps)
+	// If we didn't get a final response, ask the LLM to summarize based on tool results
+	if finalResponse == "" && len(toolsUsed) > 0 {
+		response, err := a.llm.GenerateContent(ctx, messages, llms.WithTemperature(1.0))
+		if err == nil && len(response.Choices) > 0 {
+			finalResponse = response.Choices[0].Content
+		} else {
+			finalResponse = "Successfully executed tools but could not generate final response"
+		}
 	}
 
-	// Save conversation to memory if enabled and successful
-	if a.memory != nil {
-		a.saveToMemory(ctx, inputs, map[string]any{
-			"output":         finalResult,
-			"execution_time": executionTime,
-			"success":        true,
-		})
-	}
+	executionTime := time.Since(startTime)
 
 	return &QueryResult{
 		Success:        true,
-		Data:           finalResult,
-		Explanation:    "Query executed successfully using database tools",
+		Data:           finalResponse,
+		Explanation:    finalResponse,
 		ExecutionTime:  executionTime,
 		ToolsUsed:      toolsUsed,
 		IntentDetected: intent,
@@ -658,6 +750,28 @@ func (a *Agent) initializeLLM(config *Config) (llms.Model, error) {
 			openaiOptions = append(openaiOptions, openai.WithBaseURL(llmConfig.BaseURL))
 		}
 		return openai.New(openaiOptions...)
+	case "azureopenai":
+		// Configure Azure OpenAI client
+		// Azure OpenAI endpoint format: https://{resource-name}.cognitiveservices.azure.com/
+		// The SDK will handle the full path construction
+		endpoint := strings.TrimSuffix(llmConfig.AzureEndpoint, "/")
+
+		// Debug logging for Azure OpenAI configuration
+		fmt.Printf("🔧 Azure OpenAI Configuration:\n")
+		fmt.Printf("   Endpoint: %s\n", llmConfig.AzureEndpoint)
+		fmt.Printf("   Deployment: %s\n", llmConfig.AzureDeployment)
+		fmt.Printf("   API Version: %s\n", llmConfig.AzureAPIVersion)
+		fmt.Printf("   API Key: %s...%s\n", llmConfig.APIKey[:min(10, len(llmConfig.APIKey))], llmConfig.APIKey[max(0, len(llmConfig.APIKey)-4):])
+
+		openaiOptions := []openai.Option{
+			openai.WithModel(llmConfig.AzureDeployment), // Use deployment name as model
+			openai.WithToken(llmConfig.APIKey),
+			openai.WithBaseURL(endpoint),
+			openai.WithAPIType(openai.APITypeAzure),
+			openai.WithAPIVersion(llmConfig.AzureAPIVersion),
+			// Note: Temperature is not set here to use default (1.0) as required by GPT-5
+		}
+		return openai.New(openaiOptions...)
 	case "googleai", "google":
 		return googleai.New(
 			context.Background(),
@@ -725,4 +839,229 @@ func (a *Agent) GetConversationHistory(n int) []ConversationTurn {
 
 func (a *Agent) GetModelCapability() ModelCapability {
 	return a.capability
+}
+
+// convertToolsToFunctions converts tools to LLM function definitions
+func (a *Agent) convertToolsToFunctions() []llms.FunctionDefinition {
+	functions := make([]llms.FunctionDefinition, 0, len(a.tools))
+
+	for _, tool := range a.tools {
+		// Create proper parameter schema based on tool name
+		params := a.getToolParameterSchema(tool.Name())
+
+		funcDef := llms.FunctionDefinition{
+			Name:        tool.Name(),
+			Description: tool.Description(),
+			Parameters:  params,
+		}
+		functions = append(functions, funcDef)
+	}
+
+	return functions
+}
+
+// getToolParameterSchema returns the parameter schema for a specific tool
+func (a *Agent) getToolParameterSchema(toolName string) map[string]any {
+	switch toolName {
+	case "list_column_families":
+		return map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+			"required":   []string{},
+		}
+
+	case "get_last_entry_in_column_family":
+		return map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"column_family": map[string]any{
+					"type":        "string",
+					"description": "The name of the column family to get the last entry from",
+				},
+			},
+			"required": []string{},
+		}
+
+	case "scan_keys_in_range":
+		return map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"column_family": map[string]any{
+					"type":        "string",
+					"description": "The name of the column family to scan",
+				},
+				"start_key": map[string]any{
+					"type":        "string",
+					"description": "The start key (empty string for beginning)",
+				},
+				"end_key": map[string]any{
+					"type":        "string",
+					"description": "The end key (empty string for end)",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Maximum number of results to return",
+				},
+			},
+			"required": []string{},
+		}
+
+	case "scan_keys_with_prefix":
+		return map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"column_family": map[string]any{
+					"type":        "string",
+					"description": "The name of the column family to scan",
+				},
+				"prefix": map[string]any{
+					"type":        "string",
+					"description": "The key prefix to search for",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Maximum number of results to return",
+				},
+			},
+			"required": []string{"prefix"},
+		}
+
+	case "get_value_by_key":
+		return map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"column_family": map[string]any{
+					"type":        "string",
+					"description": "The name of the column family",
+				},
+				"key": map[string]any{
+					"type":        "string",
+					"description": "The key to retrieve",
+				},
+			},
+			"required": []string{"key"},
+		}
+
+	case "get_database_stats":
+		return map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"column_family": map[string]any{
+					"type":        "string",
+					"description": "The name of the column family (optional)",
+				},
+			},
+			"required": []string{},
+		}
+
+	case "query_json_field":
+		return map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"column_family": map[string]any{
+					"type":        "string",
+					"description": "The name of the column family",
+				},
+				"field": map[string]any{
+					"type":        "string",
+					"description": "The JSON field name to query",
+				},
+				"value": map[string]any{
+					"type":        "string",
+					"description": "The value to search for",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Maximum number of results",
+				},
+			},
+			"required": []string{"field", "value"},
+		}
+
+	case "search_keys_and_values":
+		return map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"column_family": map[string]any{
+					"type":        "string",
+					"description": "The name of the column family",
+				},
+				"key_pattern": map[string]any{
+					"type":        "string",
+					"description": "Pattern to search in keys",
+				},
+				"value_pattern": map[string]any{
+					"type":        "string",
+					"description": "Pattern to search in values",
+				},
+				"limit": map[string]any{
+					"type":        "integer",
+					"description": "Maximum number of results",
+				},
+			},
+			"required": []string{},
+		}
+
+	default:
+		// Fallback to generic input parameter
+		return map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"input": map[string]any{
+					"type":        "string",
+					"description": "The input for the tool",
+				},
+			},
+			"required": []string{"input"},
+		}
+	}
+}
+
+// executeToolByName executes a tool by name with the given arguments
+func (a *Agent) executeToolByName(ctx context.Context, toolName string, arguments string) (string, error) {
+	// Find the tool
+	var targetTool tools.Tool
+	for _, tool := range a.tools {
+		if tool.Name() == toolName {
+			targetTool = tool
+			break
+		}
+	}
+
+	if targetTool == nil {
+		return "", fmt.Errorf("tool not found: %s", toolName)
+	}
+
+	// Parse arguments from GPT
+	var args map[string]interface{}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return "", fmt.Errorf("failed to parse arguments: %w", err)
+	}
+
+	// Convert structured parameters to tool input format
+	// Tools expect: {"args": {"column_family": "users", "limit": 10}}
+	var toolInput string
+	if input, ok := args["input"].(string); ok {
+		// Legacy format: {"input": "some string"}
+		toolInput = input
+	} else {
+		// New structured format: {"column_family": "users", "limit": 10}
+		// Convert to tool expected format: {"args": {...}}
+		toolInputMap := map[string]interface{}{
+			"args": args,
+		}
+		toolInputBytes, err := json.Marshal(toolInputMap)
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal tool input: %w", err)
+		}
+		toolInput = string(toolInputBytes)
+	}
+
+	// Call the tool
+	result, err := targetTool.Call(ctx, toolInput)
+	if err != nil {
+		return "", err
+	}
+
+	return result, nil
 }
