@@ -5,6 +5,7 @@ An interactive RocksDB command-line tool written in Go, with support for multipl
 ## Table of Contents
 - [Quick Start](#quick-start)
 - [Features](#features)
+- [Web UI](#web-ui)
 - [Transform Command](#transform-command)
   - [Quick Start](#quick-start-1)
   - [Expression Examples](#expression-examples)
@@ -34,6 +35,10 @@ An interactive RocksDB command-line tool written in Go, with support for multipl
 ## Quick Start
 
 ```bash
+# Web UI (easiest way to get started)
+rocksdb-cli web --db /path/to/database
+# Then open http://localhost:8080 in your browser
+
 # Interactive mode (recommended for exploration)
 rocksdb-cli repl --db /path/to/database
 
@@ -55,16 +60,85 @@ rocksdb-cli watch --db mydb --cf events
 ```
 
 ## Features
+- **🌐 Web UI** - Modern React-based web interface with single binary distribution
 - **📟 Interactive REPL** - Real-time database exploration with command history
 - **🔄 Transform Data** - Batch data transformation with Python expressions or scripts
 - **🤖 AI Assistant** - Natural language queries using LLMs (OpenAI, Ollama, Google AI)
-- **📊 Data Export** - Export to CSV and other formats
+- **📊 Data Export** - Export to CSV and JSON formats
 - **🔍 Advanced Search** - Fuzzy search, JSON queries, prefix/range scan
 - **👁️ Real-time Monitor** - Watch mode for live data changes
 - **🗄️ Column Family Support** - Full support for multiple column families
 - **💾 Read-only Mode** - Safe concurrent access for production environments
 - **🐳 Docker Support** - Easy deployment with pre-built Docker images
 - **🔌 MCP Server** - Model Context Protocol server for AI integration
+
+## Web UI
+
+The Web UI provides a modern, intuitive interface for managing your RocksDB database through your web browser. It's embedded directly into the CLI binary - no separate installation required!
+
+### Quick Start
+
+```bash
+# Start the web server (default port 8080)
+rocksdb-cli web --db /path/to/database
+
+# Custom port
+rocksdb-cli web --db /path/to/database --port 3000
+
+# Read-only mode (recommended for production)
+rocksdb-cli web --db /path/to/database --read-only
+```
+
+Then open `http://localhost:8080` in your web browser.
+
+### Features
+
+- **Browse Data** - Navigate through column families and view key-value pairs
+- **Advanced Search** - Search with regex patterns, case-sensitive options
+- **Export Data** - Export search results or entire column families to CSV/JSON
+- **Pagination** - Efficient cursor-based pagination for large datasets
+- **Binary Data Support** - Automatic hex encoding for binary keys/values
+- **JSON Viewer** - Expandable tree view for JSON data with nested parsing
+- **Column Family Management** - List and switch between column families
+- **Database Statistics** - View database and column family statistics
+- **Responsive Design** - Clean, professional interface that works on all devices
+
+### Architecture
+
+- **Single Binary** - Everything embedded using Go's `embed` package (~55MB)
+- **No Dependencies** - No need to install Node.js or any other runtime
+- **REST API** - Full-featured API available at `/api/v1/*`
+- **React + TypeScript** - Modern frontend with TailwindCSS styling
+- **Production Ready** - Supports read-only mode for safe database access
+
+### API Endpoints
+
+When running the web server, the following API endpoints are available:
+
+```
+GET  /api/v1/health            - Health check
+GET  /api/v1/cf                - List column families
+GET  /api/v1/stats             - Database statistics
+GET  /api/v1/cf/:cf/get/:key   - Get value by key
+POST /api/v1/cf/:cf/put        - Put key-value pair
+POST /api/v1/cf/:cf/scan       - Scan entries with pagination
+POST /api/v1/cf/:cf/search     - Advanced search
+POST /api/v1/cf/:cf/jsonquery  - JSON field query
+GET  /api/v1/cf/:cf/stats      - Column family statistics
+```
+
+### Development
+
+For frontend development, see the `web-ui/` directory:
+
+```bash
+cd web-ui
+npm install
+npm run dev   # Start development server with hot reload
+npm run build # Build for production (output to dist/)
+```
+
+The built files are automatically embedded into the Go binary during compilation.
 
 ## Transform Command
 
@@ -589,6 +663,7 @@ make test-coverage
 ## Available Commands
 
 ```
+  web         Start web UI server (all-in-one binary)
   repl        Start interactive REPL mode
   get         Get value by key from column family
   put         Put key-value pair in column family

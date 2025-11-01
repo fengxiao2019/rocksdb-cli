@@ -40,6 +40,7 @@ var rootCmd = &cobra.Command{
 	Long: `🗄️  RocksDB CLI - Command-line interface for RocksDB databases
 
 FEATURES:
+  🌐 Web UI                 - Modern web interface (single binary)
   📟 Interactive REPL       - Real-time database exploration
   🔄 Transform Data         - Batch data transformation with Python
   🤖 AI Assistant           - Natural language queries (GraphChain)
@@ -48,6 +49,10 @@ FEATURES:
   👁️  Real-time Monitor      - Watch for changes as they happen
 
 QUICK START:
+  # Web UI (easiest way to get started)
+  rocksdb-cli web --db /path/to/database
+  # Then open http://localhost:8080 in your browser
+
   # Interactive mode (recommended for exploration)
   rocksdb-cli repl --db /path/to/database
 
