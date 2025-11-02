@@ -15,6 +15,7 @@ type Client interface {
 	Connect(ctx context.Context) error
 	Disconnect(ctx context.Context) error
 	IsConnected() bool
+	IsInitialized() bool
 
 	// Protocol operations
 	Initialize(ctx context.Context) (*protocol.InitializeResult, error)
