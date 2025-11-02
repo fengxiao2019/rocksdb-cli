@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"rocksdb-cli/internal/db"
+	"rocksdb-cli/internal/service"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,6 +22,19 @@ func setupTestDB(t *testing.T) *db.DB {
 	database, err := db.Open(dir)
 	require.NoError(t, err)
 	return database
+}
+
+// setupTestServices creates test database and returns all service instances plus the underlying DB
+func setupTestServices(t *testing.T) (*service.DatabaseService, *service.ScanService, *service.SearchService, *service.StatsService, *db.DB) {
+	t.Helper()
+	database := setupTestDB(t)
+
+	dbService := service.NewDatabaseService(database)
+	scanService := service.NewScanService(database)
+	searchService := service.NewSearchService(database)
+	statsService := service.NewStatsService(database)
+
+	return dbService, scanService, searchService, statsService, database
 }
 
 func TestParseToolInput(t *testing.T) {
@@ -114,8 +128,8 @@ func TestGetBoolHelper(t *testing.T) {
 }
 
 func TestGetValueTool(t *testing.T) {
-	database := setupTestDB(t)
-	tool := NewGetValueTool(database)
+	dbService, _, _, _, database := setupTestServices(t)
+	tool := NewGetValueTool(dbService)
 
 	// Prepare test data
 	err := database.PutCF("default", "test-key", "test-value")
@@ -155,14 +169,14 @@ func TestGetValueTool(t *testing.T) {
 	})
 
 	t.Run("tool metadata", func(t *testing.T) {
-		assert.Equal(t, "get_value", tool.Name())
+		assert.Equal(t, "get_value_by_key", tool.Name())
 		assert.Contains(t, tool.Description(), "Get a value by key")
 	})
 }
 
 func TestPutValueTool(t *testing.T) {
-	database := setupTestDB(t)
-	tool := NewPutValueTool(database)
+	dbService, _, _, _, database := setupTestServices(t)
+	tool := NewPutValueTool(dbService)
 
 	t.Run("successful put", func(t *testing.T) {
 		input := `{"args": {"key": "new-key", "value": "new-value"}}`
@@ -217,8 +231,8 @@ func TestPutValueTool(t *testing.T) {
 }
 
 func TestScanRangeTool(t *testing.T) {
-	database := setupTestDB(t)
-	tool := NewScanRangeTool(database)
+	_, scanService, _, _, database := setupTestServices(t)
+	tool := NewScanRangeTool(scanService)
 
 	// Prepare test data
 	testData := map[string]string{
@@ -261,14 +275,14 @@ func TestScanRangeTool(t *testing.T) {
 	})
 
 	t.Run("tool metadata", func(t *testing.T) {
-		assert.Equal(t, "scan_range", tool.Name())
+		assert.Equal(t, "scan_keys_in_range", tool.Name())
 		assert.Contains(t, tool.Description(), "Scan a range of keys")
 	})
 }
 
 func TestPrefixScanTool(t *testing.T) {
-	database := setupTestDB(t)
-	tool := NewPrefixScanTool(database)
+	_, scanService, _, _, database := setupTestServices(t)
+	tool := NewPrefixScanTool(scanService)
 
 	// Prepare test data
 	testData := map[string]string{
@@ -318,14 +332,14 @@ func TestPrefixScanTool(t *testing.T) {
 	})
 
 	t.Run("tool metadata", func(t *testing.T) {
-		assert.Equal(t, "prefix_scan", tool.Name())
+		assert.Equal(t, "scan_keys_with_prefix", tool.Name())
 		assert.Contains(t, tool.Description(), "Scan keys with a specific prefix")
 	})
 }
 
 func TestListColumnFamiliesTool(t *testing.T) {
-	database := setupTestDB(t)
-	tool := NewListColumnFamiliesTool(database)
+	dbService, _, _, _, _ := setupTestServices(t)
+	tool := NewListColumnFamiliesTool(dbService)
 
 	t.Run("successful list", func(t *testing.T) {
 		input := `{"args": {}}`
@@ -348,8 +362,8 @@ func TestListColumnFamiliesTool(t *testing.T) {
 }
 
 func TestGetLastTool(t *testing.T) {
-	database := setupTestDB(t)
-	tool := NewGetLastTool(database)
+	dbService, _, _, _, database := setupTestServices(t)
+	tool := NewGetLastTool(dbService)
 
 	// Prepare test data
 	err := database.PutCF("default", "last-key", "last-value")
@@ -382,14 +396,14 @@ func TestGetLastTool(t *testing.T) {
 	})
 
 	t.Run("tool metadata", func(t *testing.T) {
-		assert.Equal(t, "get_last", tool.Name())
-		assert.Contains(t, tool.Description(), "Get the last key-value pair")
+		assert.Equal(t, "get_last_entry_in_column_family", tool.Name())
+		assert.Contains(t, tool.Description(), "Get THE LAST")
 	})
 }
 
 func TestJSONQueryTool(t *testing.T) {
-	database := setupTestDB(t)
-	tool := NewJSONQueryTool(database)
+	_, _, searchService, _, database := setupTestServices(t)
+	tool := NewJSONQueryTool(searchService)
 
 	// Prepare JSON test data
 	jsonData := map[string]string{
@@ -433,14 +447,14 @@ func TestJSONQueryTool(t *testing.T) {
 	})
 
 	t.Run("tool metadata", func(t *testing.T) {
-		assert.Equal(t, "json_query", tool.Name())
+		assert.Equal(t, "query_json_field", tool.Name())
 		assert.Contains(t, tool.Description(), "Query JSON values by field")
 	})
 }
 
 func TestGetStatsTool(t *testing.T) {
-	database := setupTestDB(t)
-	tool := NewGetStatsTool(database)
+	_, _, _, statsService, _ := setupTestServices(t)
+	tool := NewGetStatsTool(statsService)
 
 	t.Run("successful get stats", func(t *testing.T) {
 		input := `{"args": {}}`
@@ -455,7 +469,7 @@ func TestGetStatsTool(t *testing.T) {
 	})
 
 	t.Run("tool metadata", func(t *testing.T) {
-		assert.Equal(t, "get_stats", tool.Name())
+		assert.Equal(t, "get_database_stats", tool.Name())
 		assert.Contains(t, tool.Description(), "Get RocksDB database statistics")
 	})
 }
@@ -486,9 +500,9 @@ func TestCreateRocksDBTools(t *testing.T) {
 }
 
 func TestSearchTool(t *testing.T) {
-	database := setupTestDB(t)
+	_, _, searchService, _, database := setupTestServices(t)
 	require.NoError(t, database.CreateCF("users"))
-	tool := NewSearchTool(database)
+	tool := NewSearchTool(searchService)
 
 	// 准备测试数据
 	testData := map[string]string{
@@ -570,7 +584,7 @@ func TestSearchTool(t *testing.T) {
 	})
 
 	t.Run("tool metadata", func(t *testing.T) {
-		assert.Equal(t, "search", tool.Name())
+		assert.Equal(t, "search_keys_and_values", tool.Name())
 		assert.Contains(t, tool.Description(), "复杂搜索")
 	})
 }

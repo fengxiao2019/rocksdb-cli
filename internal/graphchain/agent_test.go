@@ -144,7 +144,7 @@ func TestAgent_CreateDatabaseTools(t *testing.T) {
 	tools := agent.createDatabaseTools()
 
 	assert.NotEmpty(t, tools, "Should create database tools")
-	assert.Equal(t, 8, len(tools), "Should create 8 tools")
+	assert.Equal(t, 9, len(tools), "Should create 9 tools")
 
 	// Check that all expected tools are created
 	toolNames := make(map[string]bool)
@@ -155,8 +155,8 @@ func TestAgent_CreateDatabaseTools(t *testing.T) {
 	}
 
 	expectedTools := []string{
-		"get_value", "put_value", "scan_range", "prefix_scan",
-		"list_column_families", "get_last", "json_query", "get_stats",
+		"get_value_by_key", "put_value", "scan_keys_in_range", "scan_keys_with_prefix",
+		"list_column_families", "get_last_entry_in_column_family", "query_json_field", "get_database_stats", "search_keys_and_values",
 	}
 
 	for _, expected := range expectedTools {
@@ -416,11 +416,11 @@ func TestAgent_GetCapabilities(t *testing.T) {
 	capabilities := agent.GetCapabilities()
 
 	assert.NotEmpty(t, capabilities)
-	assert.Equal(t, 8, len(capabilities))
+	assert.Equal(t, 9, len(capabilities))
 
 	expectedTools := []string{
-		"get_value", "put_value", "scan_range", "prefix_scan",
-		"list_column_families", "get_last", "json_query", "get_stats",
+		"get_value_by_key", "put_value", "scan_keys_in_range", "scan_keys_with_prefix",
+		"list_column_families", "get_last_entry_in_column_family", "query_json_field", "get_database_stats", "search_keys_and_values",
 	}
 
 	for _, expected := range expectedTools {
