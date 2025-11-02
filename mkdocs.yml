@@ -1,0 +1,194 @@
+# RocksDB-CLI Documentation Site Configuration
+
+# Documentation directory
+docs_dir: docs_site
+
+# Project information
+site_name: RocksDB-CLI
+site_description: An interactive RocksDB command-line tool with AI-powered features
+site_author: RocksDB-CLI Contributors
+site_url: https://yourusername.github.io/rocksdb-cli/
+
+# Repository information
+repo_name: yourusername/rocksdb-cli
+repo_url: https://github.com/yourusername/rocksdb-cli
+edit_uri: edit/main/docs_site/
+
+# Copyright
+copyright: Copyright &copy; 2025 RocksDB-CLI Contributors
+
+# Theme configuration
+theme:
+  name: material
+  language: zh  # Chinese interface with English content support
+
+  # Color scheme
+  palette:
+    # Light mode
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: 切换到暗黑模式
+    # Dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: 切换到亮色模式
+
+  # Font
+  font:
+    text: Roboto
+    code: Roboto Mono
+
+  # Features
+  features:
+    - navigation.instant      # Instant loading
+    - navigation.tracking     # Anchor tracking
+    - navigation.tabs         # Top-level tabs
+    - navigation.tabs.sticky  # Sticky tabs
+    - navigation.sections     # Navigation sections
+    - navigation.expand       # Expand navigation
+    - navigation.indexes      # Section indexes
+    - navigation.top          # Back to top button
+    - search.suggest          # Search suggestions
+    - search.highlight        # Search highlighting
+    - search.share            # Share search
+    - content.code.copy       # Copy code button
+    - content.code.annotate   # Code annotations
+    - content.tabs.link       # Link tabs
+    - toc.follow              # Follow table of contents
+
+  # Icon
+  icon:
+    repo: fontawesome/brands/github
+    logo: material/database
+
+# Navigation structure
+nav:
+  - 首页: index.md
+
+  - 快速开始:
+    - 安装指南: getting-started/installation.md
+    - 5分钟快速上手: getting-started/quick-start.md
+    - Docker 使用: getting-started/docker.md
+
+  - 核心功能:
+    - 功能概览: features/overview.md
+    - Web UI: features/web-ui.md
+    - Transform 数据转换: features/transform.md
+    - GraphChain AI 助手: features/graphchain-ai.md
+    - MCP 服务器: features/mcp-server.md
+    - 高级搜索: features/search.md
+
+  - 命令参考:
+    - 命令概览: commands/overview.md
+    - repl: commands/repl.md
+    - get/put: commands/get-put.md
+    - scan: commands/scan.md
+    - prefix: commands/prefix.md
+    - transform: commands/transform.md
+    - search: commands/search.md
+    - export: commands/export.md
+    - stats: commands/stats.md
+    - watch: commands/watch.md
+    - web: commands/web.md
+    - ai: commands/ai.md
+
+  - 示例教程:
+    - Key Transformation 快速入门: examples/key-transformation-quick-start.md
+    - Key Transformation 详细示例: examples/key-transformation-examples.md
+    - 数据迁移场景: examples/data-migration.md
+    - GraphChain AI 使用示例: examples/graphchain-examples.md
+
+  - API 文档:
+    - Web API: api/web-api.md
+    - MCP 协议: api/mcp-protocol.md
+
+  - 开发者:
+    - 架构设计: development/architecture.md
+    - 构建指南: development/building.md
+    - Service Layer: development/service-layer.md
+
+  - 参考:
+    - 常见问题: reference/faq.md
+    - 故障排查: reference/troubleshooting.md
+
+# Markdown extensions
+markdown_extensions:
+  # Python Markdown extensions
+  - abbr                    # Abbreviations
+  - admonition             # Admonitions
+  - attr_list              # Attribute lists
+  - def_list               # Definition lists
+  - footnotes              # Footnotes
+  - meta                   # Meta data
+  - md_in_html             # Markdown in HTML
+  - toc:                   # Table of contents
+      permalink: true
+      toc_depth: 3
+
+  # PyMdown extensions
+  - pymdownx.arithmatex:   # Math formulas
+      generic: true
+  - pymdownx.betterem:     # Better emphasis
+      smart_enable: all
+  - pymdownx.caret         # Caret
+  - pymdownx.details       # Details
+  - pymdownx.emoji:        # Emoji
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.highlight:    # Code highlighting
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite  # Inline code highlighting
+  - pymdownx.keys          # Keyboard keys
+  - pymdownx.magiclink     # Auto links
+  - pymdownx.mark          # Highlighting
+  - pymdownx.smartsymbols  # Smart symbols
+  - pymdownx.superfences:  # Super fences
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:       # Tabbed content
+      alternate_style: true
+  - pymdownx.tasklist:     # Task lists
+      custom_checkbox: true
+  - pymdownx.tilde         # Strikethrough
+
+# Plugins
+plugins:
+  - search:                # Search
+      lang:
+        - zh
+        - en
+  - minify:                # Minify HTML
+      minify_html: true
+
+# Extra configuration
+extra:
+  # Social links
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/yourusername/rocksdb-cli
+      name: GitHub Repository
+    - icon: fontawesome/brands/docker
+      link: https://hub.docker.com/r/yourusername/rocksdb-cli
+      name: Docker Hub
+
+  # Version
+  version:
+    provider: mike
+
+# Extra CSS (optional)
+extra_css:
+  - stylesheets/extra.css
+
+# Extra JavaScript (optional)
+extra_javascript:
+  - javascripts/extra.js
