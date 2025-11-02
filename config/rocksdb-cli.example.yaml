@@ -1,0 +1,139 @@
+# RocksDB CLI Complete Configuration Example
+# Copy this file to rocksdb-cli.yaml and modify as needed
+
+# Application information
+name: "RocksDB CLI"
+version: "1.0.0"
+
+# RocksDB Database configuration
+database:
+  path: "./data/rocksdb"  # Path to your RocksDB database
+  read_only: false        # Set to true for read-only mode
+
+# MCP Server configuration (this tool as MCP server)
+mcp_server:
+  enabled: false          # Enable if you want to expose this as MCP server
+  name: "RocksDB MCP Server"
+  description: "MCP server for RocksDB database operations"
+  transport:
+    type: "stdio"         # stdio, tcp, websocket, unix
+    host: "localhost"     # For TCP/WebSocket
+    port: 8080           # For TCP/WebSocket
+    socket_path: "/tmp/rocksdb-mcp.sock"  # For Unix socket
+
+# MCP Clients configuration (connecting to other MCP servers)
+mcp_clients:
+  # Filesystem MCP Server
+  filesystem:
+    enabled: true
+    transport: "stdio"
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "/Users/username/Documents"]
+    timeout: 30s
+    retry:
+      max_attempts: 3
+      backoff: "exponential"
+      initial_wait: 1s
+      max_wait: 30s
+    # Optional: filter tools
+    # enabled_tools: ["read_file", "write_file"]
+    # disabled_tools: ["delete_file"]
+
+  # GitHub MCP Server
+  github:
+    enabled: true
+    transport: "stdio"
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    timeout: 60s
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
+    retry:
+      max_attempts: 3
+      backoff: "exponential"
+      initial_wait: 1s
+      max_wait: 30s
+
+  # PostgreSQL MCP Server (disabled by default)
+  postgres:
+    enabled: false
+    transport: "tcp"
+    host: "localhost"
+    port: 5432
+    timeout: 30s
+    retry:
+      max_attempts: 3
+      backoff: "linear"
+      initial_wait: 2s
+      max_wait: 10s
+
+  # Slack MCP Server (disabled by default)
+  slack:
+    enabled: false
+    transport: "stdio"
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-slack"]
+    timeout: 30s
+    env:
+      SLACK_BOT_TOKEN: "${SLACK_BOT_TOKEN}"
+
+  # Google Drive MCP Server (disabled by default)
+  gdrive:
+    enabled: false
+    transport: "stdio"
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-gdrive"]
+    timeout: 45s
+    env:
+      GDRIVE_CLIENT_ID: "${GDRIVE_CLIENT_ID}"
+      GDRIVE_CLIENT_SECRET: "${GDRIVE_CLIENT_SECRET}"
+
+  # Custom MCP Server over Unix Socket
+  custom:
+    enabled: false
+    transport: "unix"
+    socket_path: "/tmp/custom-mcp.sock"
+    timeout: 30s
+
+# GraphChain AI configuration
+graphchain:
+  model: "gpt-4"          # AI model to use
+  enable_mcp_tools: true  # Enable MCP tools in AI assistant
+  auto_connect: true      # Auto-connect to MCP clients on startup
+
+# Logging configuration
+log_level: "info"         # debug, info, warn, error
+
+---
+
+# Example Configurations for Different Use Cases
+
+# --- Development Configuration ---
+# name: "RocksDB CLI (Dev)"
+# database:
+#   path: "./dev-data/rocksdb"
+#   read_only: false
+# log_level: "debug"
+
+# --- Production Configuration (Read-Only) ---
+# name: "RocksDB CLI (Production)"
+# database:
+#   path: "/var/lib/rocksdb/production"
+#   read_only: true
+# log_level: "warn"
+
+# --- AI Assistant with Multiple MCP Servers ---
+# graphchain:
+#   model: "gpt-4"
+#   enable_mcp_tools: true
+#   auto_connect: true
+# mcp_clients:
+#   filesystem:
+#     enabled: true
+#     # ...config...
+#   github:
+#     enabled: true
+#     # ...config...
+#   postgres:
+#     enabled: true
+#     # ...config...

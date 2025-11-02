@@ -1,8 +1,11 @@
-package mcp
+package server
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -63,24 +66,33 @@ func (tm *TransportManager) startTCPTransport(ctx context.Context) error {
 
 	fmt.Printf("MCP server listening on TCP %s\n", addr)
 
+	// Create a channel for shutdown signal
+	shutdown := make(chan struct{})
+	go func() {
+		<-ctx.Done()
+		listener.Close() // Close listener to unblock Accept()
+		close(shutdown)
+	}()
+
 	// Handle incoming connections
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			conn, err := listener.Accept()
-			if err != nil {
-				if ctx.Err() != nil {
-					return ctx.Err()
+		conn, err := listener.Accept()
+		if err != nil {
+			// Check if we're shutting down
+			select {
+			case <-shutdown:
+				return ctx.Err()
+			default:
+				// Only log error if not shutting down
+				if ctx.Err() == nil {
+					fmt.Printf("Error accepting connection: %v\n", err)
 				}
-				fmt.Printf("Error accepting connection: %v\n", err)
 				continue
 			}
-
-			// Handle connection in a goroutine
-			go tm.handleTCPConnection(conn)
 		}
+
+		// Handle connection in a goroutine
+		go tm.handleTCPConnection(conn)
 	}
 }
 
@@ -88,19 +100,100 @@ func (tm *TransportManager) startTCPTransport(ctx context.Context) error {
 func (tm *TransportManager) handleTCPConnection(conn net.Conn) {
 	defer conn.Close()
 
-	// Set connection timeout
+	// Set connection timeout (initial timeout for the connection)
+	// We'll update it for each read/write operation
 	if tm.config.Transport.Timeout > 0 {
 		conn.SetDeadline(time.Now().Add(tm.config.Transport.Timeout))
 	}
 
-	// TODO: Implement TCP connection handling with MCP server
-	// This would require implementing a custom transport for mcp-go
 	fmt.Printf("Handling TCP connection from %s\n", conn.RemoteAddr())
 
-	// For now, we'll just close the connection
-	// In a full implementation, we would need to:
-	// 1. Create a custom transport that uses the TCP connection
-	// 2. Start the MCP server with this transport
+	// Serve MCP protocol over this TCP connection
+	// We use the connection as both reader and writer for JSON-RPC messages
+	if err := tm.serveMCPConn(conn, conn); err != nil && err != io.EOF {
+		fmt.Printf("Error serving TCP connection: %v\n", err)
+	}
+}
+
+// serveMCPConn serves MCP protocol over a connection (implements JSON-RPC 2.0 over streams)
+func (tm *TransportManager) serveMCPConn(reader io.Reader, writer io.Writer) error {
+	// Create buffered reader and writer for JSON streaming
+	bufReader := bufio.NewReader(reader)
+	bufWriter := bufio.NewWriter(writer)
+
+	// Create JSON decoder and encoder
+	decoder := json.NewDecoder(bufReader)
+	encoder := json.NewEncoder(bufWriter)
+
+	// Process messages in a loop
+	for {
+		// Read JSON-RPC request
+		var request map[string]interface{}
+		if err := decoder.Decode(&request); err != nil {
+			if err == io.EOF {
+				return nil // Normal connection close
+			}
+			return fmt.Errorf("failed to decode request: %w", err)
+		}
+
+		// Process the request through MCP server
+		// Note: This is a simplified implementation
+		// The actual mcp-go library handles this internally
+		// For now, we'll create a basic response
+		response := tm.processRequest(request)
+
+		// Write response (skip if nil, which means it's a notification with no response)
+		if response != nil {
+			if err := encoder.Encode(response); err != nil {
+				return fmt.Errorf("failed to encode response: %w", err)
+			}
+
+			// Flush the writer to ensure response is sent
+			if err := bufWriter.Flush(); err != nil {
+				return fmt.Errorf("failed to flush response: %w", err)
+			}
+		}
+	}
+}
+
+// processRequest processes a JSON-RPC request and returns a response
+func (tm *TransportManager) processRequest(request map[string]interface{}) map[string]interface{} {
+	// Extract request fields
+	id := request["id"]
+	method, _ := request["method"].(string)
+
+	// Handle different methods
+	switch method {
+	case "initialize":
+		// Return initialize response
+		return map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      id,
+			"result": map[string]interface{}{
+				"protocolVersion": "2024-11-05",
+				"capabilities": map[string]interface{}{
+					"tools": map[string]interface{}{},
+				},
+				"serverInfo": map[string]string{
+					"name":    tm.config.Name,
+					"version": tm.config.Version,
+				},
+			},
+		}
+	case "initialized":
+		// No response needed for initialized notification
+		return nil
+	default:
+		// Return error for unknown method
+		return map[string]interface{}{
+			"jsonrpc": "2.0",
+			"id":      id,
+			"error": map[string]interface{}{
+				"code":    -32601,
+				"message": "Method not found",
+			},
+		}
+	}
 }
 
 // startWebSocketTransport starts WebSocket transport
