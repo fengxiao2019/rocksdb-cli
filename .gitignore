@@ -87,3 +87,7 @@ web-ui/dist/
 
 # Web server binary
 rocksdb-web-server
+
+# MkDocs generated files
+docs_site/
+site/
