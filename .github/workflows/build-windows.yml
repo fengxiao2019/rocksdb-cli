@@ -1,0 +1,147 @@
+name: Build Windows
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache: true
+
+      # 缓存 vcpkg 安装的依赖，加速后续构建
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:\vcpkg\installed
+            C:\vcpkg\packages
+          key: ${{ runner.os }}-vcpkg-rocksdb-${{ hashFiles('**/go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-vcpkg-rocksdb-
+
+      - name: Install vcpkg
+        run: |
+          if (-not (Test-Path "C:\vcpkg")) {
+            git clone https://github.com/Microsoft/vcpkg.git C:\vcpkg
+            C:\vcpkg\bootstrap-vcpkg.bat
+          }
+          echo "VCPKG_ROOT=C:\vcpkg" >> $env:GITHUB_ENV
+
+      - name: Install RocksDB and dependencies
+        run: |
+          C:\vcpkg\vcpkg install rocksdb:x64-windows
+          C:\vcpkg\vcpkg install snappy:x64-windows
+          C:\vcpkg\vcpkg install lz4:x64-windows
+          C:\vcpkg\vcpkg install zstd:x64-windows
+
+      - name: Build Web UI (if needed)
+        run: |
+          # 检查是否已经有构建好的 Web UI
+          if (-not (Test-Path "internal\webui\dist\index.html")) {
+            Write-Host "Web UI not built, skipping (using existing embedded files)"
+          } else {
+            Write-Host "Web UI already exists"
+          }
+
+      - name: Set version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -match 'refs/tags/(.*)') {
+            $VERSION = $matches[1]
+          } else {
+            $VERSION = "dev-$(git rev-parse --short HEAD)"
+          }
+          echo "VERSION=$VERSION" >> $env:GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Build for Windows amd64
+        env:
+          CGO_ENABLED: 1
+          GOOS: windows
+          GOARCH: amd64
+          CGO_CFLAGS: "-IC:/vcpkg/installed/x64-windows/include"
+          CGO_LDFLAGS: "-LC:/vcpkg/installed/x64-windows/lib -lrocksdb"
+        run: |
+          $VERSION = "${{ steps.version.outputs.VERSION }}"
+          go build -ldflags "-X main.version=$VERSION" -o build/rocksdb-cli-windows-amd64.exe ./cmd
+
+      - name: Test executable
+        run: |
+          ./build/rocksdb-cli-windows-amd64.exe --help
+
+      - name: Create package
+        run: |
+          New-Item -ItemType Directory -Force -Path release
+          Copy-Item build/rocksdb-cli-windows-amd64.exe release/
+          Copy-Item README.md release/
+          Copy-Item BUILD.md release/
+
+          # 创建压缩包
+          Compress-Archive -Path release/* -DestinationPath rocksdb-cli-windows-amd64.zip
+
+      - name: Generate checksum
+        run: |
+          $hash = Get-FileHash -Path rocksdb-cli-windows-amd64.zip -Algorithm SHA256
+          $hash.Hash + "  rocksdb-cli-windows-amd64.zip" | Out-File -FilePath checksums.txt -Encoding ASCII
+
+      - name: Upload executable artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocksdb-cli-windows-amd64
+          path: build/rocksdb-cli-windows-amd64.exe
+          retention-days: 30
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocksdb-cli-windows-package
+          path: |
+            rocksdb-cli-windows-amd64.zip
+            checksums.txt
+          retention-days: 30
+
+      # 如果是 tag 推送，创建 Release
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            rocksdb-cli-windows-amd64.zip
+            checksums.txt
+          body: |
+            ## 🎉 Windows Release ${{ steps.version.outputs.VERSION }}
+
+            ### 📦 下载
+            - **rocksdb-cli-windows-amd64.zip** - Windows 64位可执行文件及文档
+
+            ### 📝 安装说明
+            1. 下载 `rocksdb-cli-windows-amd64.zip`
+            2. 解压到任意目录
+            3. 运行 `rocksdb-cli-windows-amd64.exe`
+
+            ### ✅ 校验和
+            使用 `checksums.txt` 验证文件完整性：
+            ```powershell
+            Get-FileHash rocksdb-cli-windows-amd64.zip -Algorithm SHA256
+            ```
+
+            ### 📖 使用文档
+            查看 [README.md](https://github.com/${{ github.repository }}/blob/main/README.md)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
