@@ -24,6 +24,14 @@ build-native:
 	@echo "Build completed! Executable: $(BUILD_DIR)/$(APP_NAME)"
 	@ls -la $(BUILD_DIR)/$(APP_NAME)
 
+# Build minimal version (without Web UI)
+.PHONY: build-minimal
+build-minimal:
+	@echo "Building $(APP_NAME)-minimal (without Web UI)..."
+	@mkdir -p $(BUILD_DIR)
+	@chmod +x scripts/build-minimal.sh
+	@./scripts/build-minimal.sh
+
 # Build using Docker for Linux
 .PHONY: build-linux-docker
 build-linux-docker:
@@ -84,7 +92,8 @@ release:
 .PHONY: help
 help:
 	@echo "Available targets:"
-	@echo "  build              - Build for current platform"
+	@echo "  build              - Build for current platform (with Web UI)"
+	@echo "  build-minimal      - Build minimal version (without Web UI, faster)"
 	@echo "  build-native       - Build for current platform (alias for build)"
 	@echo "  build-linux-docker - Build for Linux using Docker"
 	@echo "  build-cross        - Show cross-compilation options"
