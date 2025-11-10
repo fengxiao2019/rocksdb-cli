@@ -39,15 +39,6 @@ build-linux-docker:
 	@chmod +x scripts/build_docker.sh
 	@./scripts/build_docker.sh
 
-# Cross-platform build (requires native compilation on each platform)
-.PHONY: build-cross
-build-cross:
-	@echo "Cross-compilation with CGO is complex. Use one of:"
-	@echo "  make build-native      - Build for current platform"
-	@echo "  make build-linux-docker - Build for Linux using Docker"
-	@echo "  GitHub Actions         - Automated cross-platform builds"
-	@echo ""
-	@echo "For Windows: Use WSL or native Windows build environment"
 
 # Clean build directory
 .PHONY: clean
@@ -96,7 +87,6 @@ help:
 	@echo "  build-minimal      - Build minimal version (without Web UI, faster)"
 	@echo "  build-native       - Build for current platform (alias for build)"
 	@echo "  build-linux-docker - Build for Linux using Docker"
-	@echo "  build-cross        - Show cross-compilation options"
 	@echo "  clean              - Clean build directory"
 	@echo "  test               - Run tests"
 	@echo "  test-coverage      - Run tests with coverage"

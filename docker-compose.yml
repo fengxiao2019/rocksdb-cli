@@ -1,0 +1,66 @@
+version: '3.8'
+
+services:
+  rocksdb-cli-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    image: rocksdb-cli-web:latest
+    container_name: rocksdb-cli-web
+    ports:
+      - "${WEB_PORT:-8090}:8090"
+    volumes:
+      # Mount your RocksDB database directory
+      - ${DB_PATH:-./}:/data
+      # Optional: mount custom config
+      - ${CONFIG_PATH:-./config}:/etc/rocksdb-cli/config:ro
+    environment:
+      # GraphChain/AI Configuration
+      - GRAPHCHAIN_LLM_PROVIDER=${GRAPHCHAIN_LLM_PROVIDER:-openai}
+      - GRAPHCHAIN_LLM_MODEL=${GRAPHCHAIN_LLM_MODEL:-gpt-4}
+      - GRAPHCHAIN_API_KEY=${GRAPHCHAIN_API_KEY}
+      - GRAPHCHAIN_BASE_URL=${GRAPHCHAIN_BASE_URL}
+
+      # Azure OpenAI (if using Azure)
+      - GRAPHCHAIN_AZURE_ENDPOINT=${GRAPHCHAIN_AZURE_ENDPOINT}
+      - GRAPHCHAIN_AZURE_DEPLOYMENT=${GRAPHCHAIN_AZURE_DEPLOYMENT}
+      - GRAPHCHAIN_AZURE_API_VERSION=${GRAPHCHAIN_AZURE_API_VERSION}
+
+      # Security settings
+      - GRAPHCHAIN_READ_ONLY=${GRAPHCHAIN_READ_ONLY:-false}
+      - GRAPHCHAIN_ENABLE_AUDIT=${GRAPHCHAIN_ENABLE_AUDIT:-true}
+
+      # Legacy environment variables (for backward compatibility)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/rocksdb-cli", "healthcheck"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - rocksdb-network
+
+  # Optional: Ollama service for local LLM
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    networks:
+      - rocksdb-network
+    profiles:
+      - ollama  # Only start with: docker-compose --profile ollama up
+
+networks:
+  rocksdb-network:
+    driver: bridge
+
+volumes:
+  ollama_data:
+    driver: local

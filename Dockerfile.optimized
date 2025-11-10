@@ -1,0 +1,71 @@
+# 优化版 Dockerfile - 参考 Mac Homebrew RocksDB 配置
+# 使用预编译的 RocksDB 10.x (Debian testing 仓库)
+#
+# 构建命令:
+#   docker build -f Dockerfile.optimized -t rocksdb-cli .
+
+FROM golang:1.23-bookworm AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 使用 Debian testing 仓库以获取更新的 RocksDB 版本
+RUN echo "deb http://deb.debian.org/debian testing main" > /etc/apt/sources.list.d/testing.list && \
+    echo 'Package: *\nPin: release a=testing\nPin-Priority: 50' > /etc/apt/preferences.d/testing
+
+# 安装 RocksDB 开发库
+RUN apt-get update && apt-get install -y -t testing \
+    librocksdb-dev \
+    libgflags-dev \
+    libsnappy-dev \
+    zlib1g-dev \
+    libbz2-dev \
+    liblz4-dev \
+    libzstd-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 设置 CGO 环境变量（参考 Mac Homebrew 配置）
+ENV CGO_ENABLED=1
+ENV CGO_CFLAGS="-I/usr/include"
+ENV CGO_LDFLAGS="-L/usr/lib -L/usr/lib/aarch64-linux-gnu -lrocksdb -lstdc++ -lm -lz -lbz2 -lsnappy -llz4 -lzstd"
+
+# 构建应用
+WORKDIR /workspace
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+RUN go build -ldflags "-X main.version=docker-optimized" -o rocksdb-cli ./cmd
+
+# 运行时镜像
+FROM debian:bookworm-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 添加 testing 仓库
+RUN echo "deb http://deb.debian.org/debian testing main" > /etc/apt/sources.list.d/testing.list && \
+    echo 'Package: *\nPin: release a=testing\nPin-Priority: 50' > /etc/apt/preferences.d/testing
+
+# 安装运行时依赖
+RUN apt-get update && apt-get install -y -t testing \
+    librocksdb8.11 \
+    libgflags2.2 \
+    libsnappy1v5 \
+    liblz4-1 \
+    libzstd1 \
+    libbz2-1.0 \
+    zlib1g \
+    libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# 复制应用
+COPY --from=builder /workspace/rocksdb-cli /usr/local/bin/rocksdb-cli
+RUN chmod +x /usr/local/bin/rocksdb-cli
+
+# 创建非 root 用户
+RUN useradd -r -s /bin/false -d /data rocksdb && \
+    mkdir -p /data && chown rocksdb:rocksdb /data
+
+USER rocksdb
+WORKDIR /data
+
+ENTRYPOINT ["/usr/local/bin/rocksdb-cli"]

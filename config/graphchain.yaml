@@ -5,7 +5,7 @@ graphchain:
     provider: "azureopenai"     # Options: openai, ollama, anthropic, googleai, azureopenai
     model: "gpt-5"        # Model name
 
-    api_key: "${AZURE_OPENAI_API_KEY}" # API key (not needed for Ollama)
+    api_key: "${GRAPHCHAIN_API_KEY}" # API key (not needed for Ollama)
     base_url: "http://localhost:11434"  # Ollama server URL
     timeout: "120s"        # Timeout for LLM calls (increased for GPT-5)
     max_tokens: 2048       # Maximum tokens in response

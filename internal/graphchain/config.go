@@ -153,9 +153,23 @@ func overrideWithEnv(config *Config) {
 	if model := os.Getenv("GRAPHCHAIN_LLM_MODEL"); model != "" {
 		gc.LLM.Model = model
 	}
+
+	// API Key with fallback to legacy environment variables
 	if apiKey := os.Getenv("GRAPHCHAIN_API_KEY"); apiKey != "" {
 		gc.LLM.APIKey = apiKey
+	} else if gc.LLM.APIKey == "" {
+		// Fallback to legacy environment variables for backward compatibility
+		if gc.LLM.Provider == "azureopenai" {
+			if legacyKey := os.Getenv("AZURE_OPENAI_API_KEY"); legacyKey != "" {
+				gc.LLM.APIKey = legacyKey
+			}
+		} else if gc.LLM.Provider == "openai" {
+			if legacyKey := os.Getenv("OPENAI_API_KEY"); legacyKey != "" {
+				gc.LLM.APIKey = legacyKey
+			}
+		}
 	}
+
 	if baseURL := os.Getenv("GRAPHCHAIN_BASE_URL"); baseURL != "" {
 		gc.LLM.BaseURL = baseURL
 	}

@@ -20,7 +20,6 @@ import (
 	"rocksdb-cli/internal/service"
 	"rocksdb-cli/internal/transform"
 	"rocksdb-cli/internal/util"
-	"rocksdb-cli/internal/webui"
 
 	"github.com/spf13/cobra"
 )
@@ -734,53 +733,35 @@ ENDPOINTS:
   /api/v1/stats    - Database statistics
   And more...`,
 	Run: func(cmd *cobra.Command, args []string) {
-		// Open database
-		rdb := openDatabase()
-		defer rdb.Close()
-
 		port, _ := cmd.Flags().GetString("port")
 		enableAI, _ := cmd.Flags().GetBool("enable-ai")
 
-		// Get embedded static files
-		staticFS, err := webui.GetDistFS()
+		// Create DBManager for dynamic database management
+		dbManager := service.NewDBManager()
+
+		// Auto-connect to the database specified by flags
+		fmt.Printf("Connecting to database: %s (read-only mode enforced)\n", dbPath)
+		dbInfo, err := dbManager.Connect(dbPath)
 		if err != nil {
-			log.Fatalf("Failed to load embedded Web UI: %v", err)
+			log.Fatalf("Failed to connect to database: %v", err)
 		}
+		fmt.Printf("✅ Database connected successfully (%d column families)\n", dbInfo.CFCount)
 
-		// Initialize AI agent if enabled
-		var aiAgent interface{}
-		if enableAI {
-			// Type assert to *db.DB
-			dbInstance, ok := rdb.(*db.DB)
-			if !ok {
-				log.Fatalf("AI requires a real DB instance, got %T", rdb)
-			}
-
-			agent := graphchain.NewAgent(dbInstance)
-			cfg, err := graphchain.LoadConfig(configPath)
-			if err != nil {
-				// Use default config if file doesn't exist
-				cfg = graphchain.DefaultConfig()
-				fmt.Printf("⚠️  Using default GraphChain config (AI may not work without proper LLM setup)\n")
-			}
-
-			if err := agent.Initialize(context.Background(), cfg); err != nil {
-				log.Fatalf("Failed to initialize AI agent: %v", err)
-			}
-			aiAgent = agent
-			fmt.Printf("AI Assistant enabled (GraphChain)\n")
-		}
-
-		// Setup router with embedded UI and optional AI
-		router := api.SetupRouterWithUI(rdb, staticFS, aiAgent)
+		// Setup router with DBManager
+		router := api.SetupRouterWithUI(dbManager)
 
 		addr := ":" + port
 		fmt.Printf("\nRocksDB Web UI Server starting...\n")
 		fmt.Printf("   Database: %s\n", dbPath)
-		fmt.Printf("   Read-only: %v\n", readOnly)
+		fmt.Printf("   Read-only: true (enforced)\n")
 		fmt.Printf("   AI Enabled: %v\n", enableAI)
 		fmt.Printf("   URL: http://localhost%s\n", addr)
 		fmt.Printf("\nOpen http://localhost%s in your browser\n\n", addr)
+
+		// Note: AI functionality would need to be integrated with DBManager
+		if enableAI {
+			fmt.Printf("⚠️  AI functionality is not yet integrated with the new database manager\n")
+		}
 
 		// Start server
 		if err := router.Run(addr); err != nil {

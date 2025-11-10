@@ -95,3 +95,52 @@ export interface DatabaseStats {
   total_size: number;
   column_family_count: number;
 }
+
+// Database Management types
+export interface DatabaseConnectionInfo {
+  path: string;
+  connected_at: string;
+  read_only: boolean;
+  column_families: string[];
+  column_family_count: number;
+}
+
+export interface AvailableDatabase {
+  path: string;
+  name: string;
+  is_valid: boolean;
+  error?: string;
+  column_families?: string[];
+}
+
+export interface DatabaseListResponse {
+  databases: AvailableDatabase[];
+  mount_points: string[];
+}
+
+export interface ConnectRequest {
+  path: string;
+  read_only?: boolean;
+}
+
+export interface ConnectResponse {
+  success: boolean;
+  message: string;
+  database?: DatabaseConnectionInfo;
+}
+
+export interface DatabaseStatus {
+  connected: boolean;
+  database?: DatabaseConnectionInfo;
+  error?: string;
+}
+
+export interface ValidatePathRequest {
+  path: string;
+}
+
+export interface ValidatePathResponse {
+  valid: boolean;
+  error?: string;
+  column_families?: string[];
+}
