@@ -1,0 +1,44 @@
+# RocksDB 10.2.1 基础镜像
+# 只需要编译一次，以后可以重复使用
+#
+# 构建命令:
+#   docker build -f Dockerfile.base -t rocksdb-base:10.2.1 .
+#
+# 然后可以推送到仓库（可选）:
+#   docker tag rocksdb-base:10.2.1 YOUR_REGISTRY/rocksdb-base:10.2.1
+#   docker push YOUR_REGISTRY/rocksdb-base:10.2.1
+
+FROM golang:1.24-bullseye
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 安装 RocksDB 编译依赖
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    cmake \
+    git \
+    libgflags-dev \
+    libsnappy-dev \
+    zlib1g-dev \
+    libbz2-dev \
+    liblz4-dev \
+    libzstd-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 编译 RocksDB v10.2.1
+# 使用 -j1 单线程编译以避免 OOM
+WORKDIR /tmp
+RUN git clone https://github.com/facebook/rocksdb.git && \
+    cd rocksdb && \
+    git checkout v10.2.1 && \
+    make shared_lib -j1 && \
+    make install-shared && \
+    ldconfig && \
+    cd / && \
+    rm -rf /tmp/rocksdb
+
+# 设置 CGO 环境变量
+ENV CGO_ENABLED=1
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+
+WORKDIR /workspace

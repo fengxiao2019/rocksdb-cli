@@ -1,0 +1,53 @@
+# 快速构建版 - 使用预编译的 RocksDB 基础镜像
+# 只需要2-3分钟！
+#
+# 前提：先运行一次构建基础镜像（只需一次）
+#   docker build -f Dockerfile.base -t rocksdb-base:10.2.1 .
+#
+# 然后使用这个快速版本:
+#   docker build -f Dockerfile.quick -t rocksdb-cli .
+
+FROM rocksdb-base:10.2.1 AS builder
+
+WORKDIR /workspace
+
+# 下载 Go 依赖
+COPY go.mod go.sum ./
+RUN go mod download
+
+# 编译应用
+COPY . .
+RUN go build -ldflags "-X main.version=docker-quick-v10.2.1" -o rocksdb-cli ./cmd
+
+# 运行时镜像
+FROM debian:bullseye-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 安装运行时依赖
+RUN apt-get update && apt-get install -y \
+    libgflags2.2 \
+    libsnappy1v5 \
+    liblz4-1 \
+    libzstd1 \
+    libbz2-1.0 \
+    zlib1g \
+    libstdc++6 \
+    && rm -rf /var/lib/apt/lists/*
+
+# 从基础镜像复制 RocksDB 库
+COPY --from=builder /usr/local/lib/librocksdb* /usr/local/lib/
+RUN ldconfig
+
+# 复制应用
+COPY --from=builder /workspace/rocksdb-cli /usr/local/bin/rocksdb-cli
+RUN chmod +x /usr/local/bin/rocksdb-cli
+
+# 创建非 root 用户
+RUN useradd -r -s /bin/false -d /data rocksdb && \
+    mkdir -p /data && chown rocksdb:rocksdb /data
+
+USER rocksdb
+WORKDIR /data
+
+ENTRYPOINT ["/usr/local/bin/rocksdb-cli"]

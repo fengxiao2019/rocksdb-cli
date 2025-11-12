@@ -1,15 +1,18 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useDbStore } from '@/stores/dbStore';
 import { listColumnFamilies, scanData, searchData } from '@/api/database';
 import { aiAPI } from '@/api/ai';
-import type { ScanResult, SearchRequest, SearchResponse } from '@/types/api';
+import { disconnectDatabase, listDatabases, connectDatabase } from '@/api/dbManager';
+import type { ScanResult, SearchRequest, SearchResponse, AvailableDatabase } from '@/types/api';
 import ViewModal from '@/components/shared/ViewModal';
 import SearchPanel from '@/components/shared/SearchPanel';
 import ExportModal from '@/components/shared/ExportModal';
 import { AIAssistant } from '@/components/shared/AIAssistant';
 
 export default function Dashboard() {
-  const {currentCF, columnFamilies, setCurrentCF, setColumnFamilies} = useDbStore();
+  const navigate = useNavigate();
+  const {currentCF, columnFamilies, currentDatabase, setCurrentCF, setColumnFamilies, setCurrentDatabase, disconnect} = useDbStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
@@ -21,6 +24,11 @@ export default function Dashboard() {
   const [showExport, setShowExport] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [aiEnabled, setAIEnabled] = useState(false);
+
+  // Database switcher state
+  const [showDatabaseMenu, setShowDatabaseMenu] = useState(false);
+  const [availableDatabases, setAvailableDatabases] = useState<AvailableDatabase[]>([]);
+  const [switching, setSwitching] = useState(false);
 
   useEffect(() => {
     loadColumnFamilies();
@@ -118,6 +126,52 @@ export default function Dashboard() {
     loadData(); // Reload scan data
   };
 
+  const loadAvailableDatabases = async () => {
+    try {
+      const dbList = await listDatabases();
+      setAvailableDatabases(dbList.databases || []);
+    } catch (err) {
+      console.error('Failed to load databases:', err);
+    }
+  };
+
+  const handleSwitchDatabase = async (dbPath: string) => {
+    try {
+      setSwitching(true);
+      setShowDatabaseMenu(false);
+
+      // Disconnect from current database
+      await disconnectDatabase();
+
+      // Connect to new database
+      const response = await connectDatabase({ path: dbPath, read_only: true });
+
+      if (response.success && response.database) {
+        setCurrentDatabase(response.database);
+
+        // Reload column families and data
+        setScanResult(null);
+        setSearchResult(null);
+        setCurrentCF(null);
+        await loadColumnFamilies();
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Failed to switch database');
+    } finally {
+      setSwitching(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    try {
+      await disconnectDatabase();
+      disconnect();
+      navigate('/');
+    } catch (err: any) {
+      setError(err.message || 'Failed to disconnect');
+    }
+  };
+
   // Helper function to convert hex string to binary
   const hexToBytes = (hexStr: string): string => {
     const hex = hexStr.replace(/\s/g, ''); // Remove spaces
@@ -181,13 +235,84 @@ export default function Dashboard() {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white shadow-sm border-b">
-        <div className="px-6 py-4">
-          <h1 className="text-2xl font-bold text-gray-900">
-            RocksDB Web UI
-          </h1>
-          <p className="text-sm text-gray-600">
-            Database Management Interface
-          </p>
+        <div className="px-6 py-4 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">
+              RocksDB Web UI
+            </h1>
+            <p className="text-sm text-gray-600">
+              Database Management Interface
+            </p>
+          </div>
+
+          {/* Database Info and Switcher */}
+          {currentDatabase && (
+            <div className="flex items-center gap-3">
+              <div className="text-right">
+                <div className="text-sm font-medium text-gray-900">
+                  {currentDatabase.path.split('/').pop() || 'Database'}
+                </div>
+                <div className="text-xs text-gray-500 font-mono">
+                  {currentDatabase.path}
+                </div>
+                <div className="text-xs text-gray-500">
+                  {currentDatabase.column_family_count} column families
+                </div>
+              </div>
+
+              <div className="relative">
+                <button
+                  onClick={() => {
+                    setShowDatabaseMenu(!showDatabaseMenu);
+                    if (!showDatabaseMenu) loadAvailableDatabases();
+                  }}
+                  className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                  disabled={switching}
+                >
+                  {switching ? 'Switching...' : 'Switch DB'}
+                </button>
+
+                {/* Database Menu Dropdown */}
+                {showDatabaseMenu && (
+                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
+                    <div className="p-3 border-b">
+                      <h3 className="text-sm font-semibold text-gray-900">Available Databases</h3>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto">
+                      {availableDatabases.length > 0 ? (
+                        availableDatabases.map((db) => (
+                          <button
+                            key={db.path}
+                            onClick={() => handleSwitchDatabase(db.path)}
+                            disabled={db.path === currentDatabase.path || !db.is_valid}
+                            className={`w-full text-left px-4 py-2 hover:bg-gray-50 transition-colors border-b border-gray-100 ${
+                              db.path === currentDatabase.path ? 'bg-blue-50' : ''
+                            } ${!db.is_valid ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          >
+                            <div className="text-sm font-medium text-gray-900">{db.name}</div>
+                            <div className="text-xs text-gray-500 font-mono truncate">{db.path}</div>
+                            {db.path === currentDatabase.path && (
+                              <span className="text-xs text-blue-600">Current</span>
+                            )}
+                          </button>
+                        ))
+                      ) : (
+                        <div className="px-4 py-3 text-sm text-gray-500">No other databases available</div>
+                      )}
+                    </div>
+                    <div className="p-2 border-t">
+                      <button
+                        onClick={handleDisconnect}
+                        className="w-full px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded transition-colors"
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </header>
 

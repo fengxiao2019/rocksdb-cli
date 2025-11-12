@@ -343,3 +343,144 @@ graphchain:
 	assert.Nil(t, config)
 	assert.Contains(t, err.Error(), "failed to parse config file")
 }
+
+func TestLegacyEnvironmentVariableFallback(t *testing.T) {
+	testCases := []struct {
+		name             string
+		provider         string
+		graphchainAPIKey string
+		legacyAPIKey     string
+		legacyEnvVar     string
+		expectedAPIKey   string
+	}{
+		{
+			name:             "GRAPHCHAIN_API_KEY takes priority for OpenAI",
+			provider:         "openai",
+			graphchainAPIKey: "new-openai-key",
+			legacyAPIKey:     "legacy-openai-key",
+			legacyEnvVar:     "OPENAI_API_KEY",
+			expectedAPIKey:   "new-openai-key",
+		},
+		{
+			name:             "Fallback to OPENAI_API_KEY when GRAPHCHAIN_API_KEY is empty",
+			provider:         "openai",
+			graphchainAPIKey: "",
+			legacyAPIKey:     "legacy-openai-key",
+			legacyEnvVar:     "OPENAI_API_KEY",
+			expectedAPIKey:   "legacy-openai-key",
+		},
+		{
+			name:             "GRAPHCHAIN_API_KEY takes priority for Azure OpenAI",
+			provider:         "azureopenai",
+			graphchainAPIKey: "new-azure-key",
+			legacyAPIKey:     "legacy-azure-key",
+			legacyEnvVar:     "AZURE_OPENAI_API_KEY",
+			expectedAPIKey:   "new-azure-key",
+		},
+		{
+			name:             "Fallback to AZURE_OPENAI_API_KEY when GRAPHCHAIN_API_KEY is empty",
+			provider:         "azureopenai",
+			graphchainAPIKey: "",
+			legacyAPIKey:     "legacy-azure-key",
+			legacyEnvVar:     "AZURE_OPENAI_API_KEY",
+			expectedAPIKey:   "legacy-azure-key",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Save original environment
+			originalGraphchain := os.Getenv("GRAPHCHAIN_API_KEY")
+			originalLegacy := os.Getenv(tc.legacyEnvVar)
+			originalProvider := os.Getenv("GRAPHCHAIN_LLM_PROVIDER")
+			originalAzureEndpoint := os.Getenv("GRAPHCHAIN_AZURE_ENDPOINT")
+			originalAzureDeployment := os.Getenv("GRAPHCHAIN_AZURE_DEPLOYMENT")
+
+			t.Cleanup(func() {
+				if originalGraphchain == "" {
+					os.Unsetenv("GRAPHCHAIN_API_KEY")
+				} else {
+					os.Setenv("GRAPHCHAIN_API_KEY", originalGraphchain)
+				}
+				if originalLegacy == "" {
+					os.Unsetenv(tc.legacyEnvVar)
+				} else {
+					os.Setenv(tc.legacyEnvVar, originalLegacy)
+				}
+				if originalProvider == "" {
+					os.Unsetenv("GRAPHCHAIN_LLM_PROVIDER")
+				} else {
+					os.Setenv("GRAPHCHAIN_LLM_PROVIDER", originalProvider)
+				}
+				if originalAzureEndpoint == "" {
+					os.Unsetenv("GRAPHCHAIN_AZURE_ENDPOINT")
+				} else {
+					os.Setenv("GRAPHCHAIN_AZURE_ENDPOINT", originalAzureEndpoint)
+				}
+				if originalAzureDeployment == "" {
+					os.Unsetenv("GRAPHCHAIN_AZURE_DEPLOYMENT")
+				} else {
+					os.Setenv("GRAPHCHAIN_AZURE_DEPLOYMENT", originalAzureDeployment)
+				}
+			})
+
+			// Set up test environment
+			os.Setenv("GRAPHCHAIN_LLM_PROVIDER", tc.provider)
+			if tc.graphchainAPIKey != "" {
+				os.Setenv("GRAPHCHAIN_API_KEY", tc.graphchainAPIKey)
+			} else {
+				os.Unsetenv("GRAPHCHAIN_API_KEY")
+			}
+			os.Setenv(tc.legacyEnvVar, tc.legacyAPIKey)
+
+			// For Azure OpenAI, set required fields
+			if tc.provider == "azureopenai" {
+				os.Setenv("GRAPHCHAIN_AZURE_ENDPOINT", "https://test.openai.azure.com")
+				os.Setenv("GRAPHCHAIN_AZURE_DEPLOYMENT", "test-deployment")
+			}
+
+			// Load config
+			config, err := LoadConfig("")
+			require.NoError(t, err)
+
+			// Verify API key
+			assert.Equal(t, tc.expectedAPIKey, config.GraphChain.LLM.APIKey)
+		})
+	}
+}
+
+func TestLegacyEnvironmentVariableFallback_NoFallbackForOtherProviders(t *testing.T) {
+	// Save original environment
+	originalProvider := os.Getenv("GRAPHCHAIN_LLM_PROVIDER")
+	originalGraphchain := os.Getenv("GRAPHCHAIN_API_KEY")
+	originalOpenAI := os.Getenv("OPENAI_API_KEY")
+
+	t.Cleanup(func() {
+		if originalProvider == "" {
+			os.Unsetenv("GRAPHCHAIN_LLM_PROVIDER")
+		} else {
+			os.Setenv("GRAPHCHAIN_LLM_PROVIDER", originalProvider)
+		}
+		if originalGraphchain == "" {
+			os.Unsetenv("GRAPHCHAIN_API_KEY")
+		} else {
+			os.Setenv("GRAPHCHAIN_API_KEY", originalGraphchain)
+		}
+		if originalOpenAI == "" {
+			os.Unsetenv("OPENAI_API_KEY")
+		} else {
+			os.Setenv("OPENAI_API_KEY", originalOpenAI)
+		}
+	})
+
+	// Set up environment for Anthropic (should not use OPENAI_API_KEY fallback)
+	os.Setenv("GRAPHCHAIN_LLM_PROVIDER", "anthropic")
+	os.Unsetenv("GRAPHCHAIN_API_KEY")
+	os.Setenv("OPENAI_API_KEY", "should-not-be-used")
+	os.Setenv("GRAPHCHAIN_LLM_MODEL", "claude-3")
+
+	// Load config - should fail validation because no API key for anthropic
+	_, err := LoadConfig("")
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "API key is required for provider: anthropic")
+}

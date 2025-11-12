@@ -30,12 +30,13 @@ RUN apt-get update && apt-get install -y \
     libzstd-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 编译 RocksDB v10.2.1 (限制并行数以避免内存不足)
+# 编译 RocksDB v10.2.1
+# 使用 -j4 平衡速度和内存使用（12核太多会OOM）
 WORKDIR /tmp
 RUN git clone https://github.com/facebook/rocksdb.git && \
     cd rocksdb && \
     git checkout v10.2.1 && \
-    make shared_lib -j2 && \
+    make shared_lib -j4 && \
     make install-shared && \
     ldconfig
 

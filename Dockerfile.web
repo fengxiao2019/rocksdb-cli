@@ -1,0 +1,67 @@
+# RocksDB CLI Web Service Dockerfile
+# This builds a container for running rocksdb-cli with web UI and AI support
+#
+# Build:
+#   docker build -f Dockerfile.web -t rocksdb-cli-web .
+#
+# Run:
+#   docker run -p 8090:8090 -v /path/to/db:/data -e GRAPHCHAIN_API_KEY=your-key rocksdb-cli-web
+
+FROM rocksdb-base:10.2.1 AS builder
+
+WORKDIR /workspace
+
+# Download Go dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build with web UI enabled
+ENV CGO_ENABLED=1
+ENV PKG_CONFIG_PATH=/usr/local/lib/pkgconfig
+RUN go build -tags webui -ldflags "-X main.version=docker-web-v10.2.1" -o rocksdb-cli ./cmd
+
+# Runtime image
+FROM debian:bullseye-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    libgflags2.2 \
+    libsnappy1v5 \
+    liblz4-1 \
+    libzstd1 \
+    libbz2-1.0 \
+    zlib1g \
+    libstdc++6 \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy RocksDB libraries from builder
+COPY --from=builder /usr/local/lib/librocksdb* /usr/local/lib/
+RUN ldconfig
+
+# Copy application
+COPY --from=builder /workspace/rocksdb-cli /usr/local/bin/rocksdb-cli
+RUN chmod +x /usr/local/bin/rocksdb-cli
+
+# Copy default configuration (optional)
+COPY --from=builder /workspace/config /etc/rocksdb-cli/config
+
+# Create data directory
+RUN mkdir -p /data && chmod 755 /data
+
+# Expose web UI port
+EXPOSE 8090
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD ["/usr/local/bin/rocksdb-cli", "healthcheck"] || exit 1
+
+# Default command: start web server
+# Note: The web server listens on 0.0.0.0 by default (all interfaces)
+# Mount your database to /data in the container
+CMD ["/usr/local/bin/rocksdb-cli", "web", "--db", "/data", "--port", "8090"]
