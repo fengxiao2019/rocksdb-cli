@@ -17,7 +17,7 @@ var (
 )
 
 func init() {
-	flag.StringVar(&dbPath, "db", "", "Path to RocksDB database (optional for web UI mode)")
+	flag.StringVar(&dbPath, "db", "", "Path to RocksDB database (required)")
 	flag.StringVar(&port, "port", "8080", "Port to listen on")
 	flag.BoolVar(&readOnly, "readonly", true, "Open database in read-only mode (recommended)")
 	flag.BoolVar(&webUI, "ui", true, "Enable Web UI with dynamic database selection")
@@ -26,19 +26,20 @@ func init() {
 func main() {
 	flag.Parse()
 
+	// Require database path
+	if dbPath == "" {
+		log.Fatal("Error: --db flag is required. Please specify a database path.\nUsage: web-server --db /path/to/database")
+	}
+
 	// Create DBManager for dynamic database management
 	dbManager := service.NewDBManager()
 
-	// If dbPath is provided, auto-connect to it
-	if dbPath != "" {
-		fmt.Printf("Auto-connecting to database: %s (read-only mode enforced)\n", dbPath)
-		if _, err := dbManager.Connect(dbPath); err != nil {
-			log.Fatalf("Failed to connect to database: %v", err)
-		}
-		fmt.Printf("✅ Database connected successfully\n")
-	} else {
-		fmt.Printf("🌐 Starting in Web UI mode - database selection via UI\n")
+	// Auto-connect to the specified database
+	fmt.Printf("Connecting to database: %s (read-only mode enforced)\n", dbPath)
+	if _, err := dbManager.Connect(dbPath); err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
 	}
+	fmt.Printf("✅ Database connected successfully\n")
 
 	// Setup router with UI support
 	router := api.SetupRouterWithUI(dbManager)
@@ -46,12 +47,8 @@ func main() {
 	// Start server
 	addr := ":" + port
 	fmt.Printf("\n🚀 RocksDB Web Server starting on http://localhost%s\n", addr)
-	if dbPath != "" {
-		fmt.Printf("   Database: %s\n", dbPath)
-		fmt.Printf("   Read-only: %v\n", readOnly)
-	} else {
-		fmt.Printf("   Mode: Web UI - Select database in browser\n")
-	}
+	fmt.Printf("   Database: %s\n", dbPath)
+	fmt.Printf("   Read-only: %v\n", readOnly)
 	fmt.Printf("\n📋 API Endpoints:\n")
 	fmt.Printf("   GET  /                              - Web UI (if enabled)\n")
 	fmt.Printf("   GET  /api/v1/health                 - Health check\n")

@@ -15,6 +15,20 @@ build:
 	@mkdir -p $(BUILD_DIR)
 	go build -ldflags "-X main.version=$(VERSION)" -o $(BUILD_DIR)/$(APP_NAME) ./cmd
 
+# Build web-server with UI
+.PHONY: build-web
+build-web:
+	@echo "Building web UI..."
+	cd web-ui && npm run build
+	@echo "Copying web UI files to internal/webui/dist..."
+	rm -rf internal/webui/dist
+	mkdir -p internal/webui/dist
+	cp -r web-ui/dist/. internal/webui/dist/
+	@echo "Building web-server..."
+	@mkdir -p $(BUILD_DIR)
+	go build -o $(BUILD_DIR)/web-server ./cmd/web-server
+	@echo "Build completed! Executable: $(BUILD_DIR)/web-server"
+
 # Build for current platform only (CGO cross-compilation is complex)
 .PHONY: build-native
 build-native:
@@ -84,6 +98,7 @@ release:
 help:
 	@echo "Available targets:"
 	@echo "  build              - Build for current platform (with Web UI)"
+	@echo "  build-web          - Build web-server with UI (builds frontend + copies files + builds backend)"
 	@echo "  build-minimal      - Build minimal version (without Web UI, faster)"
 	@echo "  build-native       - Build for current platform (alias for build)"
 	@echo "  build-linux-docker - Build for Linux using Docker"

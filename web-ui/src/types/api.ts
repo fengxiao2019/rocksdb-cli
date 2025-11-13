@@ -124,9 +124,8 @@ export interface ConnectRequest {
 }
 
 export interface ConnectResponse {
-  success: boolean;
   message: string;
-  database?: DatabaseConnectionInfo;
+  data?: DatabaseConnectionInfo;
 }
 
 export interface DatabaseStatus {

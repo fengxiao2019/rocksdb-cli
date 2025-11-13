@@ -1,17 +1,16 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { useDbStore } from '@/stores/dbStore';
 import { listColumnFamilies, scanData, searchData } from '@/api/database';
 import { aiAPI } from '@/api/ai';
-import { disconnectDatabase, listDatabases, connectDatabase } from '@/api/dbManager';
-import type { ScanResult, SearchRequest, SearchResponse, AvailableDatabase } from '@/types/api';
+import { disconnectDatabase, connectDatabase } from '@/api/dbManager';
+import type { ScanResult, SearchRequest, SearchResponse } from '@/types/api';
 import ViewModal from '@/components/shared/ViewModal';
 import SearchPanel from '@/components/shared/SearchPanel';
 import ExportModal from '@/components/shared/ExportModal';
 import { AIAssistant } from '@/components/shared/AIAssistant';
+import { dbHistory, type FavoriteDatabase } from '@/utils/dbHistory';
 
 export default function Dashboard() {
-  const navigate = useNavigate();
   const {currentCF, columnFamilies, currentDatabase, setCurrentCF, setColumnFamilies, setCurrentDatabase, disconnect} = useDbStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -27,12 +26,35 @@ export default function Dashboard() {
 
   // Database switcher state
   const [showDatabaseMenu, setShowDatabaseMenu] = useState(false);
-  const [availableDatabases, setAvailableDatabases] = useState<AvailableDatabase[]>([]);
   const [switching, setSwitching] = useState(false);
 
+  // Custom path state
+  const [customPath, setCustomPath] = useState('');
+  const [validatingCustom, setValidatingCustom] = useState(false);
+  const [customPathError, setCustomPathError] = useState('');
+
+  // Favorite databases state
+  const [favoriteDatabases, setFavoriteDatabases] = useState<FavoriteDatabase[]>([]);
+
   useEffect(() => {
-    loadColumnFamilies();
-    checkAI();
+    const init = async () => {
+      // Load favorites first
+      setFavoriteDatabases(dbHistory.getFavorites());
+
+      // Check AI availability
+      checkAI();
+
+      // Try to load column families (check if database is connected)
+      try {
+        await loadColumnFamilies();
+      } catch (err: any) {
+        // If loading fails, show database selection modal
+        console.log('[Dashboard] No database connected, showing switch DB modal');
+        setShowDatabaseMenu(true);
+      }
+    };
+
+    init();
   }, []);
 
   const checkAI = async () => {
@@ -126,10 +148,10 @@ export default function Dashboard() {
     loadData(); // Reload scan data
   };
 
-  const loadAvailableDatabases = async () => {
+  const loadAvailableDatabases = () => {
     try {
-      const dbList = await listDatabases();
-      setAvailableDatabases(dbList.databases || []);
+      // Reload favorite databases
+      setFavoriteDatabases(dbHistory.getFavorites());
     } catch (err) {
       console.error('Failed to load databases:', err);
     }
@@ -140,24 +162,44 @@ export default function Dashboard() {
       setSwitching(true);
       setShowDatabaseMenu(false);
 
+      console.log('[handleSwitchDatabase] Disconnecting from current database...');
       // Disconnect from current database
       await disconnectDatabase();
 
+      console.log('[handleSwitchDatabase] Connecting to new database:', dbPath);
       // Connect to new database
       const response = await connectDatabase({ path: dbPath, read_only: true });
 
-      if (response.success && response.database) {
-        setCurrentDatabase(response.database);
+      console.log('[handleSwitchDatabase] Response:', response);
+
+      // Backend returns {message: '...', data: {...}} format
+      // Check if connection was successful by checking if data exists
+      if (response.data) {
+        console.log('[handleSwitchDatabase] Connection successful, adding to favorites...');
+
+        // Add to favorites BEFORE setting state
+        dbHistory.addFavorite(dbPath);
+        console.log('[handleSwitchDatabase] Added to favorites');
+
+        // Update state - use 'data' field from backend response
+        setCurrentDatabase(response.data);
 
         // Reload column families and data
         setScanResult(null);
         setSearchResult(null);
         setCurrentCF(null);
-        await loadColumnFamilies();
+
+        console.log('[handleSwitchDatabase] Reloading page...');
+        // Auto-refresh the page to ensure clean state
+        window.location.reload();
+      } else {
+        console.error('[handleSwitchDatabase] Connection failed:', response);
+        setError(response.message || 'Failed to connect to database');
+        setSwitching(false);
       }
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Failed to switch database');
-    } finally {
+      console.error('[handleSwitchDatabase] Error:', err);
+      setError(err.response?.data?.error || err.message || 'Failed to switch database');
       setSwitching(false);
     }
   };
@@ -166,10 +208,35 @@ export default function Dashboard() {
     try {
       await disconnectDatabase();
       disconnect();
-      navigate('/');
+      // Reload the page to reset state and show the database selection modal
+      window.location.reload();
     } catch (err: any) {
       setError(err.message || 'Failed to disconnect');
     }
+  };
+
+  const handleConnectCustomPath = async () => {
+    if (!customPath.trim()) {
+      setCustomPathError('Please enter a database path');
+      return;
+    }
+
+    try {
+      setValidatingCustom(true);
+      setCustomPathError('');
+      await handleSwitchDatabase(customPath.trim());
+      setCustomPath('');
+      setShowDatabaseMenu(false);
+    } catch (err: any) {
+      setCustomPathError(err.response?.data?.error || err.message || 'Failed to connect');
+    } finally {
+      setValidatingCustom(false);
+    }
+  };
+
+  const handleRemoveFavorite = (path: string) => {
+    dbHistory.removeFavorite(path);
+    setFavoriteDatabases(dbHistory.getFavorites());
   };
 
   // Helper function to convert hex string to binary
@@ -246,8 +313,8 @@ export default function Dashboard() {
           </div>
 
           {/* Database Info and Switcher */}
-          {currentDatabase && (
-            <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3">
+            {currentDatabase && (
               <div className="text-right">
                 <div className="text-sm font-medium text-gray-900">
                   {currentDatabase.path.split('/').pop() || 'Database'}
@@ -259,60 +326,19 @@ export default function Dashboard() {
                   {currentDatabase.column_family_count} column families
                 </div>
               </div>
+            )}
 
-              <div className="relative">
-                <button
-                  onClick={() => {
-                    setShowDatabaseMenu(!showDatabaseMenu);
-                    if (!showDatabaseMenu) loadAvailableDatabases();
-                  }}
-                  className="px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-                  disabled={switching}
-                >
-                  {switching ? 'Switching...' : 'Switch DB'}
-                </button>
-
-                {/* Database Menu Dropdown */}
-                {showDatabaseMenu && (
-                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg border border-gray-200 z-50">
-                    <div className="p-3 border-b">
-                      <h3 className="text-sm font-semibold text-gray-900">Available Databases</h3>
-                    </div>
-                    <div className="max-h-64 overflow-y-auto">
-                      {availableDatabases.length > 0 ? (
-                        availableDatabases.map((db) => (
-                          <button
-                            key={db.path}
-                            onClick={() => handleSwitchDatabase(db.path)}
-                            disabled={db.path === currentDatabase.path || !db.is_valid}
-                            className={`w-full text-left px-4 py-2 hover:bg-gray-50 transition-colors border-b border-gray-100 ${
-                              db.path === currentDatabase.path ? 'bg-blue-50' : ''
-                            } ${!db.is_valid ? 'opacity-50 cursor-not-allowed' : ''}`}
-                          >
-                            <div className="text-sm font-medium text-gray-900">{db.name}</div>
-                            <div className="text-xs text-gray-500 font-mono truncate">{db.path}</div>
-                            {db.path === currentDatabase.path && (
-                              <span className="text-xs text-blue-600">Current</span>
-                            )}
-                          </button>
-                        ))
-                      ) : (
-                        <div className="px-4 py-3 text-sm text-gray-500">No other databases available</div>
-                      )}
-                    </div>
-                    <div className="p-2 border-t">
-                      <button
-                        onClick={handleDisconnect}
-                        className="w-full px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 rounded transition-colors"
-                      >
-                        Disconnect
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+            <button
+              onClick={() => {
+                setShowDatabaseMenu(true);
+                loadAvailableDatabases();
+              }}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
+              disabled={switching}
+            >
+              {switching ? 'Switching...' : currentDatabase ? 'Switch DB' : 'Select DB'}
+            </button>
+          </div>
         </div>
       </header>
 
@@ -596,6 +622,152 @@ export default function Dashboard() {
         isOpen={showAI}
         onClose={() => setShowAI(false)}
       />
+
+      {/* Switch Database Modal */}
+      {showDatabaseMenu && (
+        <div className="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-lg shadow-lg p-8 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-gray-900">Switch Database</h2>
+              <button
+                onClick={() => setShowDatabaseMenu(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Current Database Section */}
+            <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+              <h3 className="text-sm font-semibold text-green-800 mb-2">Current Database</h3>
+              <div className="text-sm text-green-900 font-mono">{currentDatabase?.path}</div>
+              <div className="text-xs text-green-700 mt-1">
+                {currentDatabase?.column_family_count} column families
+              </div>
+            </div>
+
+            {/* Favorite Databases */}
+            <div className="mb-6">
+              <h3 className="text-lg font-medium text-gray-800 mb-3">Favorite Databases</h3>
+              {favoriteDatabases.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {favoriteDatabases.map((db) => {
+                    const isCurrent = db.path === currentDatabase?.path;
+                    return (
+                      <div
+                        key={db.path}
+                        className={`border rounded-md p-3 transition-all ${
+                          isCurrent
+                            ? 'border-green-400 bg-green-50'
+                            : 'border-gray-200 hover:border-gray-300 hover:shadow-sm'
+                        }`}
+                      >
+                        <div className="flex justify-between items-start mb-2">
+                          <div className="flex-1 min-w-0">
+                            <h4 className="text-sm font-medium text-gray-900 truncate">{db.name}</h4>
+                            <p className="text-xs text-gray-500 font-mono mt-0.5 truncate">{db.path}</p>
+                            {db.lastConnected && (
+                              <p className="text-xs text-gray-400 mt-0.5">
+                                {new Date(db.lastConnected).toLocaleString()}
+                              </p>
+                            )}
+                          </div>
+                          {isCurrent && (
+                            <span className="ml-2 text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium flex-shrink-0">
+                              Current
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex gap-2 mt-2">
+                          <button
+                            onClick={() => handleSwitchDatabase(db.path)}
+                            disabled={isCurrent || switching}
+                            className={`flex-1 px-3 py-1.5 rounded text-sm font-medium transition-all ${
+                              isCurrent || switching
+                                ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                                : 'bg-blue-500 text-white hover:bg-blue-600 hover:shadow-sm active:scale-95'
+                            }`}
+                          >
+                            {isCurrent ? 'Connected' : switching ? 'Opening...' : 'Open'}
+                          </button>
+                          {!isCurrent && (
+                            <button
+                              onClick={() => handleRemoveFavorite(db.path)}
+                              disabled={switching}
+                              className="px-3 py-1.5 border border-red-300 text-red-600 rounded text-sm font-medium hover:bg-red-50 hover:border-red-400 transition-all disabled:opacity-50 active:scale-95"
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-gray-400 text-sm border border-dashed border-gray-300 rounded">
+                  No favorite databases yet. Connect to a database to add it to favorites.
+                </div>
+              )}
+            </div>
+
+            {/* Custom Path Input */}
+            <div className="border-t pt-4 mb-4">
+              <h3 className="text-lg font-medium text-gray-800 mb-3">Or Enter Custom Path</h3>
+              <div className="space-y-2">
+                <input
+                  type="text"
+                  value={customPath}
+                  onChange={(e) => {
+                    setCustomPath(e.target.value);
+                    setCustomPathError('');
+                  }}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter' && !validatingCustom) {
+                      handleConnectCustomPath();
+                    }
+                  }}
+                  placeholder="/path/to/rocksdb"
+                  className="w-full px-3 py-2 border border-gray-300 rounded text-sm focus:outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 transition-colors"
+                  disabled={validatingCustom || switching}
+                />
+
+                {customPathError && (
+                  <p className="text-xs text-red-500">{customPathError}</p>
+                )}
+
+                <button
+                  onClick={handleConnectCustomPath}
+                  disabled={!customPath.trim() || validatingCustom || switching}
+                  className={`w-full px-3 py-2 rounded text-sm font-medium transition-all ${
+                    customPath.trim() && !validatingCustom && !switching
+                      ? 'bg-blue-500 text-white hover:bg-blue-600 hover:shadow-sm active:scale-95'
+                      : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                  }`}
+                >
+                  {validatingCustom ? 'Connecting...' : 'Connect'}
+                </button>
+              </div>
+            </div>
+
+            {/* Disconnect Button */}
+            <div className="border-t pt-3">
+              <button
+                onClick={() => {
+                  setShowDatabaseMenu(false);
+                  handleDisconnect();
+                }}
+                className="w-full px-3 py-2 border border-red-300 text-red-600 rounded text-sm font-medium hover:bg-red-50 hover:border-red-400 transition-all active:scale-95"
+              >
+                Disconnect from Database
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

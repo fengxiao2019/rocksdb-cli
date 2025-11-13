@@ -12,12 +12,12 @@ import (
 
 // DatabaseInfo holds information about a database connection
 type DatabaseInfo struct {
-	Path         string    `json:"path"`
-	ReadOnly     bool      `json:"readOnly"`
-	Connected    bool      `json:"connected"`
-	ConnectedAt  time.Time `json:"connectedAt,omitempty"`
-	CFCount      int       `json:"cfCount"`
-	ColumnFamilies []string `json:"columnFamilies"`
+	Path              string    `json:"path"`
+	ReadOnly          bool      `json:"read_only"`
+	Connected         bool      `json:"connected"`
+	ConnectedAt       time.Time `json:"connected_at,omitempty"`
+	CFCount           int       `json:"column_family_count"`
+	ColumnFamilies    []string  `json:"column_families"`
 }
 
 // DBManager manages database connections with thread-safe switching
