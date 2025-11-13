@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useDbStore } from '@/stores/dbStore';
 import { listColumnFamilies, scanData, searchData } from '@/api/database';
 import { aiAPI } from '@/api/ai';
-import { disconnectDatabase, connectDatabase } from '@/api/dbManager';
+import { disconnectDatabase, connectDatabase, getCurrentDatabase } from '@/api/dbManager';
 import type { ScanResult, SearchRequest, SearchResponse } from '@/types/api';
 import ViewModal from '@/components/shared/ViewModal';
 import SearchPanel from '@/components/shared/SearchPanel';
@@ -43,6 +43,16 @@ export default function Dashboard() {
 
       // Check AI availability
       checkAI();
+
+      // Load current database info first
+      try {
+        const currentDbInfo = await getCurrentDatabase();
+        if (currentDbInfo) {
+          setCurrentDatabase(currentDbInfo);
+        }
+      } catch (err) {
+        console.log('[Dashboard] Failed to get current database info:', err);
+      }
 
       // Try to load column families (check if database is connected)
       try {
@@ -336,7 +346,7 @@ export default function Dashboard() {
               className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
               disabled={switching}
             >
-              {switching ? 'Switching...' : currentDatabase ? 'Switch DB' : 'Select DB'}
+              {switching ? 'Switching...' : 'Switch DB'}
             </button>
           </div>
         </div>
