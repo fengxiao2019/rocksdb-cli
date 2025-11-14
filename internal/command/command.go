@@ -195,6 +195,7 @@ func (h *Handler) Execute(input string) bool {
 		cf := ""
 		var startStr, endStr string
 		useSmart := flags["smart"] != "false" // Default to true, can disable with --smart=false
+		pretty := flags["pretty"] == "true"
 
 		// Get current CF if available
 		currentCF := ""
@@ -205,8 +206,9 @@ func (h *Handler) Execute(input string) bool {
 		// Parse column family and range
 		switch len(args) {
 		case 0: // scan (no args)
-			fmt.Println("Usage: scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no] [--timestamp] [--smart=true|false]")
+			fmt.Println("Usage: scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no] [--timestamp] [--pretty] [--smart=true|false]")
 			fmt.Println("  Use * as wildcard to scan all entries (e.g., scan * or scan * *)")
+			fmt.Println("  --pretty enables JSON pretty-printing for values")
 			fmt.Println("  --smart=false disables automatic key format conversion")
 			return true
 		case 1: // scan <start> (using current CF) or scan * (scan all)
@@ -263,8 +265,9 @@ func (h *Handler) Execute(input string) bool {
 				endStr = args[2]
 			}
 		default:
-			fmt.Println("Usage: scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no] [--timestamp] [--smart=true|false]")
+			fmt.Println("Usage: scan [<cf>] [start] [end] [--limit=N] [--reverse] [--values=no] [--timestamp] [--pretty] [--smart=true|false]")
 			fmt.Println("  Use * as wildcard to scan all entries (e.g., scan * or scan * *)")
+			fmt.Println("  --pretty enables JSON pretty-printing for values")
 			fmt.Println("  --smart=false disables automatic key format conversion")
 			return true
 		}
@@ -288,10 +291,9 @@ func (h *Handler) Execute(input string) bool {
 			}
 		}
 
+		// Set default limit only if user didn't explicitly set one
 		if !userSetLimit {
-			if _, hasAfter := flags["after"]; hasAfter || !hasAfter {
-				opts.Limit = 100
-			}
+			opts.Limit = 100
 		}
 
 		if _, ok := flags["reverse"]; ok {
@@ -358,20 +360,20 @@ func (h *Handler) Execute(input string) bool {
 				if showTimestamp {
 					if timestamp := parseTimestamp(k); timestamp != "" {
 						if opts.Values {
-							fmt.Printf("%s (%s): %s\n", util.FormatKey(k), timestamp, v)
+							fmt.Printf("%s (%s): %s\n", util.FormatKey(k), timestamp, formatValue(v, pretty))
 						} else {
 							fmt.Printf("%s (%s)\n", util.FormatKey(k), timestamp)
 						}
 					} else {
 						if opts.Values {
-							fmt.Printf("%s: %s\n", util.FormatKey(k), v)
+							fmt.Printf("%s: %s\n", util.FormatKey(k), formatValue(v, pretty))
 						} else {
 							fmt.Printf("%s\n", util.FormatKey(k))
 						}
 					}
 				} else {
 					if opts.Values {
-						fmt.Printf("%s: %s\n", util.FormatKey(k), v)
+						fmt.Printf("%s: %s\n", util.FormatKey(k), formatValue(v, pretty))
 					} else {
 						fmt.Printf("%s\n", util.FormatKey(k))
 					}

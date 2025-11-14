@@ -184,7 +184,7 @@ var scanCmd = &cobra.Command{
 		reverse, _ := cmd.Flags().GetBool("reverse")
 		keysOnly, _ := cmd.Flags().GetBool("keys-only")
 
-		err := executeScan(rdb, cf, start, end, limit, reverse, keysOnly)
+		err := executeScan(rdb, cf, start, end, limit, reverse, keysOnly, pretty)
 		if err != nil {
 			fmt.Printf("Scan failed: %v\n", err)
 			os.Exit(1)
@@ -806,7 +806,7 @@ func formatValue(value string, pretty bool) string {
 }
 
 // executeScan executes a scan operation with smart key conversion
-func executeScan(rdb db.KeyValueDB, cf string, start, end *string, limit int, reverse, keysOnly bool) error {
+func executeScan(rdb db.KeyValueDB, cf string, start, end *string, limit int, reverse, keysOnly, pretty bool) error {
 	// Convert pointers to strings for smart scan
 	var startStr, endStr string
 	if start != nil {

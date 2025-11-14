@@ -715,6 +715,24 @@ func TestHandler_Execute(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:  "scan wildcard with limit and pretty",
+			input: "scan * --limit=3 --pretty",
+			setup: func(db *mockDB, state *ReplState) {
+				state.CurrentCF = "default"
+				db.data["default"] = make(map[string]string) // Clear existing data
+				for i := 1; i <= 5; i++ {
+					db.PutCF("default", fmt.Sprintf("key%d", i), fmt.Sprintf(`{"id":%d,"name":"user%d"}`, i, i))
+				}
+			},
+			wantErr: false,
+			validate: func(t *testing.T, db *mockDB, state *ReplState) {
+				// Verify that the data is there (at least 5 entries)
+				if len(db.data["default"]) != 5 {
+					t.Errorf("Expected 5 entries in database, got %d", len(db.data["default"]))
+				}
+			},
+		},
+		{
 			name:  "scan reverse",
 			input: "scan key1 key5 --reverse",
 			setup: func(db *mockDB, state *ReplState) {
