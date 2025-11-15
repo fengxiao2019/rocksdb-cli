@@ -494,7 +494,7 @@ func TestExecuteScan(t *testing.T) {
 			mockDB := newMockDB()
 
 			output := captureOutput(func() {
-				err := executeScan(mockDB, tt.cf, tt.start, tt.end, tt.limit, tt.reverse, tt.keysOnly)
+				err := executeScan(mockDB, tt.cf, tt.start, tt.end, tt.limit, tt.reverse, tt.keysOnly, false, "", "", false, false, false)
 				if (err != nil) != tt.wantError {
 					t.Errorf("executeScan() error = %v, wantError %v", err, tt.wantError)
 					return
@@ -552,7 +552,7 @@ func TestExecuteScanEmptyColumnFamily(t *testing.T) {
 	mockDB.data["empty"] = make(map[string]string)
 
 	output := captureOutput(func() {
-		err := executeScan(mockDB, "empty", nil, nil, 0, false, false)
+		err := executeScan(mockDB, "empty", nil, nil, 0, false, false, false, "", "", false, false, false)
 		if err != nil {
 			t.Errorf("executeScan() on empty CF should not error, got: %v", err)
 		}
@@ -615,7 +615,7 @@ func TestExecutePrefix(t *testing.T) {
 			mockDB := newMockDB()
 
 			output := captureOutput(func() {
-				err := executePrefix(mockDB, tt.cf, tt.prefix, tt.pretty)
+				err := executePrefix(mockDB, tt.cf, tt.prefix, tt.pretty, "", false, false, false)
 				if (err != nil) != tt.wantError {
 					t.Errorf("executePrefix() error = %v, wantError %v", err, tt.wantError)
 					return

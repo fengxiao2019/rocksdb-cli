@@ -515,6 +515,10 @@ func TestAgent_ProcessQuery_NoTokenization(t *testing.T) {
 	config := newTestConfig()
 	agent.config = config
 
+	// Initialize fake LLM to prevent nil pointer dereference
+	responses := []string{"get all keys from users"}
+	agent.llm = fake.NewFakeLLM(responses)
+
 	// 使用 mockExecutor 替换 agent.executor
 	agent.executor = &mockExecutor{}
 

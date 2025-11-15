@@ -756,13 +756,6 @@ func (a *Agent) initializeLLM(config *Config) (llms.Model, error) {
 		// The SDK will handle the full path construction
 		endpoint := strings.TrimSuffix(llmConfig.AzureEndpoint, "/")
 
-		// Debug logging for Azure OpenAI configuration
-		fmt.Printf("Azure OpenAI Configuration:\n")
-		fmt.Printf("   Endpoint: %s\n", llmConfig.AzureEndpoint)
-		fmt.Printf("   Deployment: %s\n", llmConfig.AzureDeployment)
-		fmt.Printf("   API Version: %s\n", llmConfig.AzureAPIVersion)
-		fmt.Printf("   API Key: %s...%s\n", llmConfig.APIKey[:min(10, len(llmConfig.APIKey))], llmConfig.APIKey[max(0, len(llmConfig.APIKey)-4):])
-
 		openaiOptions := []openai.Option{
 			openai.WithModel(llmConfig.AzureDeployment), // Use deployment name as model
 			openai.WithToken(llmConfig.APIKey),

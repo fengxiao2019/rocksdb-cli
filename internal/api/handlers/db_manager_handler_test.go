@@ -82,7 +82,7 @@ func TestDBManagerHandler_Connect_Success(t *testing.T) {
 
 	data := response["data"].(map[string]interface{})
 	assert.Equal(t, dbPath, data["path"])
-	assert.True(t, data["readOnly"].(bool))
+	assert.True(t, data["read_only"].(bool))
 	assert.True(t, data["connected"].(bool))
 }
 

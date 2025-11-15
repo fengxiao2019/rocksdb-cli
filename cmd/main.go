@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -1053,11 +1055,25 @@ func runGraphChainInteractive(database db.KeyValueDB) {
 		os.Exit(0)
 	}()
 
+	// Create a buffered reader for multi-line input
+	reader := bufio.NewReader(os.Stdin)
+
 	for {
 		fmt.Print("ai> ")
 
-		var input string
-		fmt.Scanln(&input)
+		// Read full line including spaces
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				fmt.Println("\nGoodbye!")
+				break
+			}
+			fmt.Printf("Error reading input: %v\n", err)
+			continue
+		}
+
+		// Trim whitespace and newline
+		input = strings.TrimSpace(input)
 
 		if input == "exit" || input == "quit" {
 			fmt.Println("Goodbye!")
