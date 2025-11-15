@@ -196,6 +196,10 @@ func (h *Handler) Execute(input string) bool {
 		var startStr, endStr string
 		useSmart := flags["smart"] != "false" // Default to true, can disable with --smart=false
 		pretty := flags["pretty"] == "true"
+		keyPattern := flags["key-pattern"]
+		valuePattern := flags["value-pattern"]
+		useRegex := flags["regex"] == "true"
+		caseSensitive := flags["case-sensitive"] == "true"
 
 		// Get current CF if available
 		currentCF := ""
@@ -354,28 +358,45 @@ func (h *Handler) Execute(input string) bool {
 				}
 			}
 
-			// Output in sorted order
+			// Output in sorted order with optional highlighting
 			for _, k := range keys {
 				v := result[k]
+
+				// Apply highlighting to key if pattern is provided
+				displayKey := util.FormatKey(k)
+				if keyPattern != "" {
+					displayKey = util.HighlightPattern(keyPattern, displayKey, useRegex, caseSensitive)
+				}
+
+				// Apply highlighting to value if pattern is provided
+				displayValue := formatValue(v, pretty)
+				if valuePattern != "" && opts.Values {
+					if pretty {
+						displayValue = util.HighlightInJSON(valuePattern, displayValue, useRegex, caseSensitive)
+					} else {
+						displayValue = util.HighlightPattern(valuePattern, displayValue, useRegex, caseSensitive)
+					}
+				}
+
 				if showTimestamp {
 					if timestamp := parseTimestamp(k); timestamp != "" {
 						if opts.Values {
-							fmt.Printf("%s (%s): %s\n", util.FormatKey(k), timestamp, formatValue(v, pretty))
+							fmt.Printf("%s (%s): %s\n", displayKey, timestamp, displayValue)
 						} else {
-							fmt.Printf("%s (%s)\n", util.FormatKey(k), timestamp)
+							fmt.Printf("%s (%s)\n", displayKey, timestamp)
 						}
 					} else {
 						if opts.Values {
-							fmt.Printf("%s: %s\n", util.FormatKey(k), formatValue(v, pretty))
+							fmt.Printf("%s: %s\n", displayKey, displayValue)
 						} else {
-							fmt.Printf("%s\n", util.FormatKey(k))
+							fmt.Printf("%s\n", displayKey)
 						}
 					}
 				} else {
 					if opts.Values {
-						fmt.Printf("%s: %s\n", util.FormatKey(k), formatValue(v, pretty))
+						fmt.Printf("%s: %s\n", displayKey, displayValue)
 					} else {
-						fmt.Printf("%s\n", util.FormatKey(k))
+						fmt.Printf("%s\n", displayKey)
 					}
 				}
 			}
@@ -466,6 +487,9 @@ func (h *Handler) Execute(input string) bool {
 		flags, args := parseFlags(parts[1:])
 		pretty := flags["pretty"] == "true"
 		useSmart := flags["smart"] != "false" // Default to true, can disable with --smart=false
+		valuePattern := flags["value-pattern"]
+		useRegex := flags["regex"] == "true"
+		caseSensitive := flags["case-sensitive"] == "true"
 
 		var cf, prefix string
 
@@ -514,11 +538,25 @@ func (h *Handler) Execute(input string) bool {
 				}
 			}
 
-			// Output in sorted order with optional pretty printing
+			// Output in sorted order with optional pretty printing and highlighting
 			for _, k := range keys {
 				v := result[k]
+
+				// Highlight the prefix in the key
+				displayKey := util.FormatKey(k)
+				displayKey = util.HighlightPrefix(prefix, displayKey, caseSensitive)
+
+				// Apply highlighting to value if pattern is provided
 				formattedValue := formatValue(v, pretty)
-				fmt.Printf("%s: %s\n", util.FormatKey(k), formattedValue)
+				if valuePattern != "" {
+					if pretty {
+						formattedValue = util.HighlightInJSON(valuePattern, formattedValue, useRegex, caseSensitive)
+					} else {
+						formattedValue = util.HighlightPattern(valuePattern, formattedValue, useRegex, caseSensitive)
+					}
+				}
+
+				fmt.Printf("%s: %s\n", displayKey, formattedValue)
 			}
 
 			// In the prefix command handler, after detecting key format:
@@ -943,7 +981,9 @@ func (h *Handler) Execute(input string) bool {
 		if err != nil {
 			handleError(err, "Search", cf)
 		} else {
-			h.formatSearchResults(results, flags["pretty"] == "true")
+			// Use highlighting with the search patterns
+			h.formatSearchResultsWithPattern(results, flags["pretty"] == "true",
+				keyPattern, valuePattern, opts.UseRegex, opts.CaseSensitive)
 		}
 	case "keyformat":
 		// Parse arguments
@@ -1256,8 +1296,13 @@ func formatBytes(bytes int64) string {
 	}
 }
 
-// formatSearchResults formats and displays search results
+// formatSearchResults formats and displays search results with optional highlighting
 func (h *Handler) formatSearchResults(results *db.SearchResults, pretty bool) {
+	h.formatSearchResultsWithPattern(results, pretty, "", "", false, false)
+}
+
+// formatSearchResultsWithPattern formats and displays search results with pattern highlighting
+func (h *Handler) formatSearchResultsWithPattern(results *db.SearchResults, pretty bool, keyPattern, valuePattern string, useRegex, caseSensitive bool) {
 	if len(results.Results) == 0 {
 		fmt.Println("No matches found")
 		fmt.Printf("Query took: %s\n", results.QueryTime)
@@ -1274,8 +1319,14 @@ func (h *Handler) formatSearchResults(results *db.SearchResults, pretty bool) {
 
 	// Display results
 	for i, result := range results.Results {
+		// Apply highlighting to the key if pattern is provided
+		displayKey := util.FormatKey(result.Key)
+		if keyPattern != "" && !result.KeyIsBinary {
+			displayKey = util.HighlightPattern(keyPattern, displayKey, useRegex, caseSensitive)
+		}
+
 		// Show result number
-		fmt.Printf("[%d] Key: %s", i+1, util.FormatKey(result.Key))
+		fmt.Printf("[%d] Key: %s", i+1, displayKey)
 
 		// Show which fields matched
 		if len(result.MatchedFields) > 0 {
@@ -1289,6 +1340,16 @@ func (h *Handler) formatSearchResults(results *db.SearchResults, pretty bool) {
 			if pretty {
 				valueToDisplay = formatValue(result.Value, true)
 			}
+
+			// Apply highlighting to the value if pattern is provided
+			if valuePattern != "" && !result.ValueIsBinary {
+				if pretty {
+					valueToDisplay = util.HighlightInJSON(valuePattern, valueToDisplay, useRegex, caseSensitive)
+				} else {
+					valueToDisplay = util.HighlightPattern(valuePattern, valueToDisplay, useRegex, caseSensitive)
+				}
+			}
+
 			// Indent value for better readability
 			valueLines := strings.Split(valueToDisplay, "\n")
 			for _, line := range valueLines {

@@ -183,8 +183,13 @@ var scanCmd = &cobra.Command{
 		limit, _ := cmd.Flags().GetInt("limit")
 		reverse, _ := cmd.Flags().GetBool("reverse")
 		keysOnly, _ := cmd.Flags().GetBool("keys-only")
+		keyPattern, _ := cmd.Flags().GetString("key-pattern")
+		valuePattern, _ := cmd.Flags().GetString("value-pattern")
+		useRegex, _ := cmd.Flags().GetBool("regex")
+		caseSensitive, _ := cmd.Flags().GetBool("case-sensitive")
+		noColor, _ := cmd.Flags().GetBool("no-color")
 
-		err := executeScan(rdb, cf, start, end, limit, reverse, keysOnly, pretty)
+		err := executeScan(rdb, cf, start, end, limit, reverse, keysOnly, pretty, keyPattern, valuePattern, useRegex, caseSensitive, noColor)
 		if err != nil {
 			fmt.Printf("Scan failed: %v\n", err)
 			os.Exit(1)
@@ -203,8 +208,12 @@ var prefixCmd = &cobra.Command{
 
 		cf := getColumnFamily(cmd)
 		prefix := args[0]
+		valuePattern, _ := cmd.Flags().GetString("value-pattern")
+		useRegex, _ := cmd.Flags().GetBool("regex")
+		caseSensitive, _ := cmd.Flags().GetBool("case-sensitive")
+		noColor, _ := cmd.Flags().GetBool("no-color")
 
-		err := executePrefix(rdb, cf, prefix, pretty)
+		err := executePrefix(rdb, cf, prefix, pretty, valuePattern, useRegex, caseSensitive, noColor)
 		if err != nil {
 			fmt.Printf("Prefix scan failed: %v\n", err)
 			os.Exit(1)
@@ -233,13 +242,14 @@ var searchCmd = &cobra.Command{
 		after, _ := cmd.Flags().GetString("after")
 		exportFile, _ := cmd.Flags().GetString("export")
 		exportSep, _ := cmd.Flags().GetString("export-sep")
+		noColor, _ := cmd.Flags().GetBool("no-color")
 
 		if keyPattern == "" && valuePattern == "" {
 			fmt.Println("Error: Must specify at least --key or --value pattern")
 			os.Exit(1)
 		}
 
-		err := executeSearch(rdb, cf, keyPattern, valuePattern, useRegex, caseSensitive, keysOnly, tick, limit, pretty, after, exportFile, exportSep)
+		err := executeSearch(rdb, cf, keyPattern, valuePattern, useRegex, caseSensitive, keysOnly, tick, limit, pretty, after, exportFile, exportSep, noColor)
 		if err != nil {
 			fmt.Printf("Search failed: %v\n", err)
 			os.Exit(1)
@@ -806,7 +816,7 @@ func formatValue(value string, pretty bool) string {
 }
 
 // executeScan executes a scan operation with smart key conversion
-func executeScan(rdb db.KeyValueDB, cf string, start, end *string, limit int, reverse, keysOnly, pretty bool) error {
+func executeScan(rdb db.KeyValueDB, cf string, start, end *string, limit int, reverse, keysOnly, pretty bool, keyPattern, valuePattern string, useRegex, caseSensitive, noColor bool) error {
 	// Convert pointers to strings for smart scan
 	var startStr, endStr string
 	if start != nil {
@@ -814,6 +824,13 @@ func executeScan(rdb db.KeyValueDB, cf string, start, end *string, limit int, re
 	}
 	if end != nil {
 		endStr = *end
+	}
+
+	// Handle color settings
+	if noColor {
+		util.DisableColor()
+	} else {
+		util.EnableColor()
 	}
 
 	// Use ScanService instead of direct DB access
@@ -839,9 +856,24 @@ func executeScan(rdb db.KeyValueDB, cf string, start, end *string, limit int, re
 	fmt.Printf("Found %d entries in column family '%s':\n", result.Count, cf)
 	i := 1
 	for k, v := range result.Data {
-		fmt.Printf("[%d] Key: %s\n", i, util.FormatKey(k))
+		// Apply highlighting to the key if pattern is provided
+		displayKey := util.FormatKey(k)
+		if keyPattern != "" {
+			displayKey = util.HighlightPattern(keyPattern, displayKey, useRegex, caseSensitive)
+		}
+		fmt.Printf("[%d] Key: %s\n", i, displayKey)
+
 		if !keysOnly {
-			fmt.Printf("    Value: %s\n", formatValue(v, pretty))
+			// Apply highlighting to the value if pattern is provided
+			formattedValue := formatValue(v, pretty)
+			if valuePattern != "" {
+				if pretty {
+					formattedValue = util.HighlightInJSON(valuePattern, formattedValue, useRegex, caseSensitive)
+				} else {
+					formattedValue = util.HighlightPattern(valuePattern, formattedValue, useRegex, caseSensitive)
+				}
+			}
+			fmt.Printf("    Value: %s\n", formattedValue)
 		}
 		fmt.Println()
 		i++
@@ -851,7 +883,14 @@ func executeScan(rdb db.KeyValueDB, cf string, start, end *string, limit int, re
 }
 
 // executePrefix executes a prefix scan operation
-func executePrefix(rdb db.KeyValueDB, cf, prefix string, pretty bool) error {
+func executePrefix(rdb db.KeyValueDB, cf, prefix string, pretty bool, valuePattern string, useRegex, caseSensitive, noColor bool) error {
+	// Handle color settings
+	if noColor {
+		util.DisableColor()
+	} else {
+		util.EnableColor()
+	}
+
 	// Use ScanService instead of direct DB access
 	scanService := service.NewScanService(rdb)
 	result, err := scanService.PrefixScan(cf, prefix, 0) // 0 means no limit
@@ -867,8 +906,21 @@ func executePrefix(rdb db.KeyValueDB, cf, prefix string, pretty bool) error {
 	fmt.Printf("Found %d entries with prefix '%s' in column family '%s':\n", result.Count, prefix, cf)
 	i := 1
 	for k, v := range result.Data {
-		fmt.Printf("[%d] Key: %s\n", i, util.FormatKey(k))
-		fmt.Printf("    Value: %s\n", formatValue(v, pretty))
+		// Highlight the prefix in the key
+		displayKey := util.FormatKey(k)
+		displayKey = util.HighlightPrefix(prefix, displayKey, caseSensitive)
+		fmt.Printf("[%d] Key: %s\n", i, displayKey)
+
+		// Apply highlighting to the value if pattern is provided
+		formattedValue := formatValue(v, pretty)
+		if valuePattern != "" {
+			if pretty {
+				formattedValue = util.HighlightInJSON(valuePattern, formattedValue, useRegex, caseSensitive)
+			} else {
+				formattedValue = util.HighlightPattern(valuePattern, formattedValue, useRegex, caseSensitive)
+			}
+		}
+		fmt.Printf("    Value: %s\n", formattedValue)
 		fmt.Println()
 		i++
 	}
@@ -877,7 +929,7 @@ func executePrefix(rdb db.KeyValueDB, cf, prefix string, pretty bool) error {
 }
 
 // executeSearch executes a fuzzy search operation
-func executeSearch(rdb db.KeyValueDB, cf, keyPattern, valuePattern string, useRegex, caseSensitive, keysOnly, tick bool, limit int, pretty bool, after, exportFile, exportSep string) error {
+func executeSearch(rdb db.KeyValueDB, cf, keyPattern, valuePattern string, useRegex, caseSensitive, keysOnly, tick bool, limit int, pretty bool, after, exportFile, exportSep string, noColor bool) error {
 	// Use SearchService instead of direct DB access
 	searchService := service.NewSearchService(rdb)
 
@@ -912,6 +964,13 @@ func executeSearch(rdb db.KeyValueDB, cf, keyPattern, valuePattern string, useRe
 		return nil
 	}
 
+	// Handle color settings
+	if noColor {
+		util.DisableColor()
+	} else {
+		util.EnableColor()
+	}
+
 	// Execute search
 	results, err := searchService.Search(cf, opts)
 	if err != nil {
@@ -926,9 +985,25 @@ func executeSearch(rdb db.KeyValueDB, cf, keyPattern, valuePattern string, useRe
 	fmt.Printf("Found %d matches in column family '%s' (query time: %s)\n\n", results.Count, cf, results.QueryTime)
 
 	for i, result := range results.Results {
-		fmt.Printf("[%d] Key: %s\n", i+1, result.Key)
+		// Apply highlighting to the key if it matches the key pattern
+		displayKey := result.Key
+		if keyPattern != "" && !result.KeyIsBinary {
+			displayKey = util.HighlightPattern(keyPattern, result.Key, useRegex, caseSensitive)
+		}
+		fmt.Printf("[%d] Key: %s\n", i+1, displayKey)
+
 		if !keysOnly {
-			fmt.Printf("    Value: %s\n", formatValue(result.Value, pretty))
+			// Apply highlighting to the value if it matches the value pattern
+			formattedValue := formatValue(result.Value, pretty)
+			if valuePattern != "" && !result.ValueIsBinary {
+				if pretty {
+					// Use JSON-aware highlighting for pretty-printed values
+					formattedValue = util.HighlightInJSON(valuePattern, formattedValue, useRegex, caseSensitive)
+				} else {
+					formattedValue = util.HighlightPattern(valuePattern, formattedValue, useRegex, caseSensitive)
+				}
+			}
+			fmt.Printf("    Value: %s\n", formattedValue)
 		}
 		if i < len(results.Results)-1 {
 			fmt.Println()
@@ -1067,10 +1142,21 @@ func init() {
 	keyformatCmd.Flags().StringP("cf", "c", "default", "Column family")
 	jsonqueryCmd.Flags().StringP("cf", "c", "default", "Column family")
 
+	// Prefix command specific flags
+	prefixCmd.Flags().String("value-pattern", "", "Highlight values matching this pattern")
+	prefixCmd.Flags().Bool("regex", false, "Use regex patterns instead of wildcards")
+	prefixCmd.Flags().Bool("case-sensitive", false, "Case sensitive pattern matching")
+	prefixCmd.Flags().Bool("no-color", false, "Disable color highlighting of matches")
+
 	// Scan command specific flags
 	scanCmd.Flags().Int("limit", 0, "Limit number of results")
 	scanCmd.Flags().Bool("reverse", false, "Scan in reverse order")
 	scanCmd.Flags().Bool("keys-only", false, "Show only keys, not values")
+	scanCmd.Flags().String("key-pattern", "", "Highlight keys matching this pattern")
+	scanCmd.Flags().String("value-pattern", "", "Highlight values matching this pattern")
+	scanCmd.Flags().Bool("regex", false, "Use regex patterns instead of wildcards")
+	scanCmd.Flags().Bool("case-sensitive", false, "Case sensitive pattern matching")
+	scanCmd.Flags().Bool("no-color", false, "Disable color highlighting of matches")
 
 	// Search command specific flags
 	searchCmd.Flags().String("key", "", "Key pattern to search for")
@@ -1081,6 +1167,7 @@ func init() {
 	searchCmd.Flags().Bool("tick", false, "Treat keys as .NET tick times and convert to UTC string format")
 	searchCmd.Flags().Int("limit", 50, "Limit search results")
 	searchCmd.Flags().String("after", "", "Start search after this key (pagination)")
+	searchCmd.Flags().Bool("no-color", false, "Disable color highlighting of matches")
 	searchCmd.Flags().String("export", "", "Export results to CSV file")
 	searchCmd.Flags().String("export-sep", ",", "CSV separator for export")
 

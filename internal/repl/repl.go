@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"rocksdb-cli/internal/command"
 	"rocksdb-cli/internal/db"
+	"rocksdb-cli/internal/util"
 	"runtime"
 	"sync"
 
@@ -26,6 +27,9 @@ var (
 )
 
 func Start(rdb db.KeyValueDB) {
+	// Enable color highlighting for interactive mode
+	util.EnableColor()
+
 	state := &command.ReplState{CurrentCF: "default"}
 	handler := &command.Handler{DB: rdb, State: state}
 
