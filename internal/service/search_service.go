@@ -13,6 +13,8 @@ type SearchService struct {
 type SearchOptions struct {
 	KeyPattern    string `json:"key_pattern"`    // Pattern to search in keys
 	ValuePattern  string `json:"value_pattern"`  // Pattern to search in values
+	StartKey      string `json:"start_key"`      // Start of key range (inclusive)
+	EndKey        string `json:"end_key"`        // End of key range (exclusive)
 	UseRegex      bool   `json:"use_regex"`      // Whether to use regex matching
 	CaseSensitive bool   `json:"case_sensitive"` // Whether search is case sensitive
 	KeysOnly      bool   `json:"keys_only"`      // Return only keys, not values
@@ -36,6 +38,7 @@ type SearchResultItem struct {
 	Value         string   `json:"value"`
 	KeyIsBinary   bool     `json:"key_is_binary"`   // true if key is hex encoded
 	ValueIsBinary bool     `json:"value_is_binary"` // true if value is hex encoded
+	Timestamp     string   `json:"timestamp"`       // parsed timestamp if key is a timestamp
 	MatchedFields []string `json:"matched_fields"`  // Which fields matched (key, value, both)
 }
 
@@ -58,6 +61,8 @@ func (s *SearchService) Search(cf string, opts SearchOptions) (*SearchResult, er
 	dbOpts := db.SearchOptions{
 		KeyPattern:    opts.KeyPattern,
 		ValuePattern:  opts.ValuePattern,
+		StartKey:      opts.StartKey,
+		EndKey:        opts.EndKey,
 		UseRegex:      opts.UseRegex,
 		CaseSensitive: opts.CaseSensitive,
 		KeysOnly:      opts.KeysOnly,
@@ -78,6 +83,7 @@ func (s *SearchService) Search(cf string, opts SearchOptions) (*SearchResult, er
 			Value:         r.Value,
 			KeyIsBinary:   r.KeyIsBinary,
 			ValueIsBinary: r.ValueIsBinary,
+			Timestamp:     r.Timestamp,
 			MatchedFields: r.MatchedFields,
 		})
 	}

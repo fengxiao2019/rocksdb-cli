@@ -1165,6 +1165,127 @@ func TestErrorHandling(t *testing.T) {
 	_ = state
 }
 
+func TestParseTimestamp(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		// Unix seconds (7-9 digits)
+		{
+			name:     "unix seconds - typical timestamp",
+			input:    "1609459200",
+			expected: "2021-01-01 00:00:00.000 UTC",
+		},
+		{
+			name:     "unix seconds - year 2000",
+			input:    "946684800",
+			expected: "2000-01-01 00:00:00.000 UTC",
+		},
+		// Unix milliseconds (10-12 digits)
+		{
+			name:     "unix milliseconds",
+			input:    "1609459200000",
+			expected: "2021-01-01 00:00:00.000 UTC",
+		},
+		{
+			name:     "unix milliseconds with ms precision",
+			input:    "1609459200123",
+			expected: "2021-01-01 00:00:00.000 UTC",
+		},
+		// Unix microseconds (13-15 digits)
+		{
+			name:     "unix microseconds",
+			input:    "1609459200000000",
+			expected: "2021-01-01 00:00:00.000 UTC",
+		},
+		// Unix nanoseconds (16+ digits)
+		{
+			name:     "unix nanoseconds",
+			input:    "1609459200000000000",
+			expected: "2021-01-01 00:00:00.000 UTC",
+		},
+		// .NET DateTime.Ticks (18 digits, specific range)
+		{
+			name:     "dotnet ticks - 1990-04-01",
+			input:    "638997650955197121",
+			expected: "2030-09-15 10:51:35.519 UTC",
+		},
+		{
+			name:     "dotnet ticks - 2020-01-01",
+			input:    "637134336000000000",
+			expected: "2020-01-01 00:00:00.000 UTC",
+		},
+		{
+			name:     "dotnet ticks - 2025-06-15",
+			input:    "638540736000000000",
+			expected: "2025-06-15 00:00:00.000 UTC",
+		},
+		// Binary formatted keys (from FormatKey)
+		{
+			name:     "formatted binary - unix seconds",
+			input:    "1609459200 (0x5feeeb00)",
+			expected: "2021-01-01 00:00:00.000 UTC",
+		},
+		{
+			name:     "formatted binary - unix milliseconds",
+			input:    "1609459200000 (0x176e5c27000)",
+			expected: "2021-01-01 00:00:00.000 UTC",
+		},
+		{
+			name:     "formatted binary - different timestamp",
+			input:    "1640995200 (0x61cb8e00)",
+			expected: "2022-01-01 00:00:00.000 UTC",
+		},
+		{
+			name:     "formatted binary - dotnet ticks",
+			input:    "638997650955197121 (0x8de2cfa5d7e5ac1)",
+			expected: "2030-09-15 10:51:35.519 UTC",
+		},
+		// Float timestamps
+		{
+			name:     "float seconds",
+			input:    "1609459200.5",
+			expected: "2021-01-01 00:00:00.000 UTC",
+		},
+		// Invalid inputs
+		{
+			name:     "invalid format - not a number",
+			input:    "not a timestamp",
+			expected: "",
+		},
+		{
+			name:     "invalid format - too small",
+			input:    "12345",
+			expected: "",
+		},
+		{
+			name:     "invalid format - empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "invalid format - text with number",
+			input:    "abc123def",
+			expected: "",
+		},
+		{
+			name:     "invalid format - hex only",
+			input:    "(0x5feeeb00)",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseTimestamp(tt.input)
+			if result != tt.expected {
+				t.Errorf("parseTimestamp(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
 func contains(slice []string, item string) bool {
 	for _, s := range slice {
 		if s == item {

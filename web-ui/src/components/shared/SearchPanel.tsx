@@ -9,17 +9,21 @@ interface SearchPanelProps {
 export default function SearchPanel({ onSearch, isLoading }: SearchPanelProps) {
   const [keyPattern, setKeyPattern] = useState('');
   const [valuePattern, setValuePattern] = useState('');
+  const [startKey, setStartKey] = useState('');
+  const [endKey, setEndKey] = useState('');
   const [useRegex, setUseRegex] = useState(false);
   const [caseSensitive, setCaseSensitive] = useState(false);
 
   const handleSearch = () => {
-    if (!keyPattern && !valuePattern) {
+    if (!keyPattern && !valuePattern && !startKey && !endKey) {
       return;
     }
 
     onSearch({
       key_pattern: keyPattern || undefined,
       value_pattern: valuePattern || undefined,
+      start_key: startKey || undefined,
+      end_key: endKey || undefined,
       use_regex: useRegex,
       case_sensitive: caseSensitive,
       limit: 100,
@@ -29,6 +33,8 @@ export default function SearchPanel({ onSearch, isLoading }: SearchPanelProps) {
   const handleClear = () => {
     setKeyPattern('');
     setValuePattern('');
+    setStartKey('');
+    setEndKey('');
     setUseRegex(false);
     setCaseSensitive(false);
   };
@@ -68,7 +74,7 @@ export default function SearchPanel({ onSearch, isLoading }: SearchPanelProps) {
             type="text"
             value={keyPattern}
             onChange={(e) => setKeyPattern(e.target.value)}
-            placeholder="Search by key..."
+            placeholder="Search by key pattern..."
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
           />
@@ -81,17 +87,53 @@ export default function SearchPanel({ onSearch, isLoading }: SearchPanelProps) {
             type="text"
             value={valuePattern}
             onChange={(e) => setValuePattern(e.target.value)}
-            placeholder="Search by value..."
+            placeholder="Search by value pattern..."
             className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
           />
         </div>
       </div>
 
+      {/* Key Range */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            Start Key (inclusive)
+          </label>
+          <input
+            type="text"
+            value={startKey}
+            onChange={(e) => setStartKey(e.target.value)}
+            placeholder="Start of range (e.g., 638997650901287127)"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            Keys ≥ this value (leave empty for no limit)
+          </p>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">
+            End Key (exclusive)
+          </label>
+          <input
+            type="text"
+            value={endKey}
+            onChange={(e) => setEndKey(e.target.value)}
+            placeholder="End of range (e.g., 638997650999999999)"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            Keys &lt; this value (leave empty for no limit)
+          </p>
+        </div>
+      </div>
+
       <div className="flex gap-2">
         <button
           onClick={handleSearch}
-          disabled={isLoading || (!keyPattern && !valuePattern)}
+          disabled={isLoading || (!keyPattern && !valuePattern && !startKey && !endKey)}
           className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {isLoading ? 'Searching...' : 'Search'}

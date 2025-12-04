@@ -65,6 +65,7 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+.venv/
 test_*.py
 
 # Documentation (intermediate/work-in-progress docs)

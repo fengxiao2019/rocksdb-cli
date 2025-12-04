@@ -41,12 +41,12 @@ func (h *SearchHandler) Search(c *gin.Context) {
 		return
 	}
 
-	// Validate that at least one pattern is provided
-	if opts.KeyPattern == "" && opts.ValuePattern == "" {
+	// Validate that at least one search criteria is provided
+	if opts.KeyPattern == "" && opts.ValuePattern == "" && opts.StartKey == "" && opts.EndKey == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"error":   "Missing search pattern",
-			"message": "At least one of 'key_pattern' or 'value_pattern' must be provided",
+			"error":   "Missing search criteria",
+			"message": "At least one of 'key_pattern', 'value_pattern', 'start_key', or 'end_key' must be provided",
 		})
 		return
 	}

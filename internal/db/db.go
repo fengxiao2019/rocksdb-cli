@@ -1,6 +1,7 @@
 package db
 
 import (
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/json"
 	"errors"
@@ -70,6 +71,8 @@ type DatabaseStats struct {
 type SearchOptions struct {
 	KeyPattern    string `json:"key_pattern"`    // Pattern to search in keys
 	ValuePattern  string `json:"value_pattern"`  // Pattern to search in values
+	StartKey      string `json:"start_key"`      // Start of key range (inclusive)
+	EndKey        string `json:"end_key"`        // End of key range (exclusive)
 	UseRegex      bool   `json:"use_regex"`      // Whether to use regex matching
 	CaseSensitive bool   `json:"case_sensitive"` // Whether search is case sensitive
 	Limit         int    `json:"limit"`          // Maximum number of results
@@ -84,6 +87,7 @@ type SearchResult struct {
 	Value         string   `json:"value"`
 	KeyIsBinary   bool     `json:"key_is_binary"`   // true if key is base64 encoded
 	ValueIsBinary bool     `json:"value_is_binary"` // true if value is base64 encoded
+	Timestamp     string   `json:"timestamp"`       // parsed timestamp if key is a timestamp
 	MatchedFields []string `json:"matched_fields"`  // Which fields matched (key, value, both)
 }
 
@@ -99,10 +103,11 @@ type SearchResults struct {
 
 // KeyValue represents a single key-value pair with binary encoding info
 type KeyValue struct {
-	Key          string `json:"key"`
-	Value        string `json:"value"`
-	KeyIsBinary  bool   `json:"key_is_binary"`   // true if key is base64 encoded
-	ValueIsBinary bool  `json:"value_is_binary"` // true if value is base64 encoded
+	Key           string `json:"key"`
+	Value         string `json:"value"`
+	KeyIsBinary   bool   `json:"key_is_binary"`   // true if key is base64 encoded
+	ValueIsBinary bool   `json:"value_is_binary"` // true if value is base64 encoded
+	Timestamp     string `json:"timestamp"`       // parsed timestamp if key is a timestamp
 }
 
 // ScanPageResult contains paginated scan results
@@ -833,28 +838,104 @@ func (d *DB) SearchCF(cf string, opts SearchOptions) (*SearchResults, error) {
 		}
 	}
 
+	// Prepare range boundaries
+	keyFormat := d.getKeyFormat(cf)
+	var startKeyBytes, endKeyBytes []byte
+	var useRangeComparison bool
+
+	// Convert StartKey if specified
+	if opts.StartKey != "" && opts.StartKey != "*" {
+		if keyFormat == util.KeyFormatUint64BE {
+			if converted, err := util.ConvertStringToKey(opts.StartKey, keyFormat); err == nil {
+				startKeyBytes = converted
+				useRangeComparison = true
+			}
+		}
+		if startKeyBytes == nil {
+			startKeyBytes = []byte(opts.StartKey)
+		}
+	}
+
+	// Convert EndKey if specified
+	if opts.EndKey != "" && opts.EndKey != "*" {
+		if keyFormat == util.KeyFormatUint64BE {
+			if converted, err := util.ConvertStringToKey(opts.EndKey, keyFormat); err == nil {
+				endKeyBytes = converted
+				if !useRangeComparison {
+					useRangeComparison = true
+				}
+			}
+		}
+		if endKeyBytes == nil {
+			endKeyBytes = []byte(opts.EndKey)
+		}
+	}
+
 	// 游标分页：先跳过所有 key <= After
 	foundAfter := opts.After == ""
 	var afterKeyBytes []byte
 	var useByteComparison bool
 
+	// Decode cursor if it's base64 encoded
+	afterCursor := opts.After
+	if afterCursor != "" {
+		// Try to decode as base64
+		if decoded, err := base64.StdEncoding.DecodeString(afterCursor); err == nil {
+			afterCursor = string(decoded)
+		}
+		// If decode fails, use as-is (backward compatibility)
+	}
+
 	// If After is specified, try to convert it to the appropriate binary format
 	if !foundAfter {
-		keyFormat := d.getKeyFormat(cf)
 		if keyFormat == util.KeyFormatUint64BE {
 			// For numeric keys, convert the after string to binary format
-			if convertedKey, err := util.ConvertStringToKey(opts.After, keyFormat); err == nil {
+			if convertedKey, err := util.ConvertStringToKey(afterCursor, keyFormat); err == nil {
 				afterKeyBytes = convertedKey
 				useByteComparison = true
 			}
 		}
 	}
 
+	// Start iteration from StartKey if specified, otherwise from beginning
 	var lastKey string
-	for it.SeekToFirst(); it.Valid(); it.Next() {
+	if startKeyBytes != nil {
+		it.Seek(startKeyBytes)
+	} else {
+		it.SeekToFirst()
+	}
+
+	for ; it.Valid(); it.Next() {
 		k := it.Key()
 		keyStr := string(k.Data())
 		keyBytes := k.Data()
+
+		// Check key range boundaries
+		if startKeyBytes != nil {
+			var isBeforeStart bool
+			if useRangeComparison {
+				isBeforeStart = compareBytes(keyBytes, startKeyBytes) < 0
+			} else {
+				isBeforeStart = keyStr < opts.StartKey
+			}
+			if isBeforeStart {
+				k.Free()
+				continue
+			}
+		}
+
+		if endKeyBytes != nil {
+			var isAfterEnd bool
+			if useRangeComparison {
+				isAfterEnd = compareBytes(keyBytes, endKeyBytes) >= 0
+			} else {
+				isAfterEnd = keyStr >= opts.EndKey
+			}
+			if isAfterEnd {
+				k.Free()
+				break // No more keys in range
+			}
+		}
 
 		if !foundAfter {
 			var shouldSkip bool
@@ -863,7 +944,7 @@ func (d *DB) SearchCF(cf string, opts SearchOptions) (*SearchResults, error) {
 				shouldSkip = compareBytes(keyBytes, afterKeyBytes) <= 0
 			} else {
 				// Use string comparison for string keys or fallback
-				shouldSkip = keyStr <= opts.After
+				shouldSkip = keyStr <= afterCursor
 			}
 
 			if !shouldSkip {
@@ -914,6 +995,9 @@ func (d *DB) SearchCF(cf string, opts SearchOptions) (*SearchResults, error) {
 			shouldInclude = keyMatches
 		} else if opts.ValuePattern != "" {
 			shouldInclude = valueMatches
+		} else if opts.StartKey != "" || opts.EndKey != "" {
+			// Range-only search (no pattern specified)
+			shouldInclude = true
 		}
 
 		if shouldInclude {
@@ -942,6 +1026,7 @@ func (d *DB) SearchCF(cf string, opts SearchOptions) (*SearchResults, error) {
 				Value:         valueEncoded,
 				KeyIsBinary:   keyIsBinary && !opts.Tick, // Don't mark as binary if converted to tick time
 				ValueIsBinary: valueIsBinary,
+				Timestamp:     util.ParseTimestamp(keyEncoded),
 				MatchedFields: matchedFields,
 			}
 			results.Results = append(results.Results, result)
@@ -959,7 +1044,8 @@ func (d *DB) SearchCF(cf string, opts SearchOptions) (*SearchResults, error) {
 	results.NextCursor = ""
 	results.HasMore = false
 	if opts.Limit > 0 && len(results.Results) >= opts.Limit && it.Valid() {
-		results.NextCursor = lastKey
+		// Encode cursor as base64 to safely handle binary keys
+		results.NextCursor = base64.StdEncoding.EncodeToString([]byte(lastKey))
 		results.HasMore = true
 	}
 
@@ -1225,7 +1311,17 @@ func (d *DB) ScanCFPage(cf string, start, end []byte, opts ScanOptions) (ScanPag
 	result := make(map[string]string)
 	startStr := string(start)
 	endStr := string(end)
+
+	// Decode cursor if it's base64 encoded
 	startAfter := opts.StartAfter
+	if startAfter != "" {
+		// Try to decode as base64
+		if decoded, err := base64.StdEncoding.DecodeString(startAfter); err == nil {
+			startAfter = string(decoded)
+		}
+		// If decode fails, use as-is (backward compatibility)
+	}
+
 	var lastKey string
 	count := 0
 
@@ -1329,6 +1425,7 @@ func (d *DB) ScanCFPage(cf string, start, end []byte, opts ScanOptions) (ScanPag
 			Value:         valueEncoded,
 			KeyIsBinary:   keyIsBinary,
 			ValueIsBinary: valueIsBinary,
+			Timestamp:     util.ParseTimestamp(keyEncoded),
 		})
 
 		lastKey = kStr
@@ -1351,7 +1448,8 @@ func (d *DB) ScanCFPage(cf string, start, end []byte, opts ScanOptions) (ScanPag
 	if opts.Limit > 0 && count >= opts.Limit {
 		if it.Valid() {
 			hasMore = true
-			nextCursor = lastKey
+			// Encode cursor as base64 to safely handle binary keys
+			nextCursor = base64.StdEncoding.EncodeToString([]byte(lastKey))
 		}
 	}
 

@@ -8,12 +8,13 @@ import ViewModal from '@/components/shared/ViewModal';
 import SearchPanel from '@/components/shared/SearchPanel';
 import ExportModal from '@/components/shared/ExportModal';
 import { AIAssistant } from '@/components/shared/AIAssistant';
+import { ToastContainer } from '@/components/shared/Toast';
+import { useToast } from '@/hooks/useToast';
 import { dbHistory, type FavoriteDatabase } from '@/utils/dbHistory';
 
 export default function Dashboard() {
   const {currentCF, columnFamilies, currentDatabase, setCurrentCF, setColumnFamilies, setCurrentDatabase, disconnect} = useDbStore();
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [searchResult, setSearchResult] = useState<SearchResponse | null>(null);
   const [loadingData, setLoadingData] = useState(false);
@@ -23,6 +24,16 @@ export default function Dashboard() {
   const [showExport, setShowExport] = useState(false);
   const [showAI, setShowAI] = useState(false);
   const [aiEnabled, setAIEnabled] = useState(false);
+  const [lastSearchParams, setLastSearchParams] = useState<SearchRequest | null>(null);
+  
+  // Toast notifications
+  const { toasts, showError, closeToast } = useToast();
+
+  // Timestamp column state
+  const [showTimestampColumn, setShowTimestampColumn] = useState(() => {
+    const saved = localStorage.getItem('showTimestampColumn');
+    return saved === 'true';
+  });
 
   // Database switcher state
   const [showDatabaseMenu, setShowDatabaseMenu] = useState(false);
@@ -35,6 +46,11 @@ export default function Dashboard() {
 
   // Favorite databases state
   const [favoriteDatabases, setFavoriteDatabases] = useState<FavoriteDatabase[]>([]);
+
+  // Save timestamp column preference to localStorage
+  useEffect(() => {
+    localStorage.setItem('showTimestampColumn', showTimestampColumn.toString());
+  }, [showTimestampColumn]);
 
   useEffect(() => {
     const init = async () => {
@@ -91,7 +107,7 @@ export default function Dashboard() {
         setCurrentCF(data.column_families[0]);
       }
     } catch (err: any) {
-      setError(err.message);
+      showError(err.message || 'An error occurred');
     } finally {
       setLoading(false);
     }
@@ -102,6 +118,11 @@ export default function Dashboard() {
 
     try {
       setLoadingData(true);
+      
+      // Save scroll position before loading
+      const scrollContainer = document.querySelector('.overflow-auto');
+      const scrollHeight = scrollContainer?.scrollHeight || 0;
+      
       const result = await scanData(currentCF, {
         limit: 50,
         after: cursor
@@ -119,11 +140,19 @@ export default function Dashboard() {
           results_v2: [...existingResultsV2, ...newResultsV2],
           count: scanResult.count + result.count
         });
+        
+        // Restore scroll position after a short delay to allow DOM update
+        setTimeout(() => {
+          if (scrollContainer) {
+            const newScrollHeight = scrollContainer.scrollHeight;
+            scrollContainer.scrollTop = newScrollHeight - scrollHeight + scrollContainer.scrollTop;
+          }
+        }, 50);
       } else {
         setScanResult(result);
       }
     } catch (err: any) {
-      setError(err.message);
+      showError(err.message || 'An error occurred');
     } finally {
       setLoadingData(false);
     }
@@ -135,17 +164,57 @@ export default function Dashboard() {
     }
   };
 
+  const loadMoreSearch = async () => {
+    if (!currentCF || !searchResult?.next_cursor || !lastSearchParams) return;
+
+    try {
+      setLoadingData(true);
+      
+      // Save scroll position before loading
+      const scrollContainer = document.querySelector('.overflow-auto');
+      const scrollHeight = scrollContainer?.scrollHeight || 0;
+      
+      // Use stored search params with new cursor
+      const nextParams: SearchRequest = {
+        ...lastSearchParams,
+        after: searchResult.next_cursor
+      };
+      
+      const result = await searchData(currentCF, nextParams);
+      
+      // Append new results to existing results
+      setSearchResult({
+        ...result,
+        results: [...searchResult.results, ...result.results],
+        count: searchResult.count + result.count
+      });
+      
+      // Restore scroll position after a short delay to allow DOM update
+      setTimeout(() => {
+        if (scrollContainer) {
+          const newScrollHeight = scrollContainer.scrollHeight;
+          scrollContainer.scrollTop = newScrollHeight - scrollHeight + scrollContainer.scrollTop;
+        }
+      }, 50);
+    } catch (err: any) {
+      showError(err.message || 'An error occurred');
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
   const handleSearch = async (params: SearchRequest) => {
     if (!currentCF) return;
 
     try {
       setLoadingData(true);
       setIsSearchMode(true);
+      setLastSearchParams(params); // Store search params for pagination
       const result = await searchData(currentCF, params);
       setSearchResult(result);
       setScanResult(null); // Clear scan results
     } catch (err: any) {
-      setError(err.message);
+      showError(err.message || 'An error occurred');
     } finally {
       setLoadingData(false);
     }
@@ -154,6 +223,7 @@ export default function Dashboard() {
   const handleBackToScan = () => {
     setIsSearchMode(false);
     setSearchResult(null);
+    setLastSearchParams(null); // Clear stored search params
     setShowSearch(false);
     loadData(); // Reload scan data
   };
@@ -204,12 +274,12 @@ export default function Dashboard() {
         window.location.reload();
       } else {
         console.error('[handleSwitchDatabase] Connection failed:', response);
-        setError(response.message || 'Failed to connect to database');
+        showError(response.message || 'Failed to connect to database');
         setSwitching(false);
       }
     } catch (err: any) {
       console.error('[handleSwitchDatabase] Error:', err);
-      setError(err.response?.data?.error || err.message || 'Failed to switch database');
+      showError(err.response?.data?.error || err.message || 'Failed to switch database');
       setSwitching(false);
     }
   };
@@ -221,7 +291,7 @@ export default function Dashboard() {
       // Reload the page to reset state and show the database selection modal
       window.location.reload();
     } catch (err: any) {
-      setError(err.message || 'Failed to disconnect');
+      showError(err.message || 'Failed to disconnect');
     }
   };
 
@@ -238,7 +308,9 @@ export default function Dashboard() {
       setCustomPath('');
       setShowDatabaseMenu(false);
     } catch (err: any) {
-      setCustomPathError(err.response?.data?.error || err.message || 'Failed to connect');
+      const errorMsg = err.response?.data?.error || err.message || 'Failed to connect';
+      setCustomPathError(errorMsg);
+      showError(errorMsg);
     } finally {
       setValidatingCustom(false);
     }
@@ -297,18 +369,9 @@ export default function Dashboard() {
     );
   }
 
-  if (error) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
-          <h3 className="text-red-800 font-semibold mb-2">Error</h3>
-          <p className="text-red-600">{error}</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
+    <>
+      <ToastContainer toasts={toasts} onClose={closeToast} />
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white shadow-sm border-b">
@@ -422,12 +485,28 @@ export default function Dashboard() {
                   {showSearch ? 'Hide Search' : 'Search'}
                 </button>
                 {((scanResult && scanResult.count > 0) || (searchResult && searchResult.count > 0)) && (
-                  <button
-                    onClick={() => setShowExport(true)}
-                    className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
-                  >
-                    Export
-                  </button>
+                  <>
+                    <button
+                      onClick={() => setShowTimestampColumn(!showTimestampColumn)}
+                      className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+                        showTimestampColumn
+                          ? 'bg-indigo-600 text-white hover:bg-indigo-700'
+                          : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-50'
+                      }`}
+                      title="Show/hide timestamp column"
+                    >
+                      <svg className="w-4 h-4 inline-block mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      {showTimestampColumn ? 'Hide Timestamp' : 'Show Timestamp'}
+                    </button>
+                    <button
+                      onClick={() => setShowExport(true)}
+                      className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
+                    >
+                      Export
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -446,28 +525,34 @@ export default function Dashboard() {
                   <p className="text-gray-600">Loading data...</p>
                 </div>
               </div>
-            ) : isSearchMode && searchResult && searchResult.count > 0 ? (
-              <div className="space-y-4">
-                <div className="bg-white rounded-lg shadow overflow-hidden">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Key
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Value
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          Matched Fields
-                        </th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
-                          Actions
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {searchResult.results.map((item) => (
+            ) : isSearchMode && searchResult ? (
+              searchResult.results && searchResult.results.length > 0 ? (
+                <div className="space-y-4">
+                  <div className="bg-white rounded-lg shadow overflow-hidden">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Key
+                          </th>
+                          {showTimestampColumn && (
+                            <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              Timestamp
+                            </th>
+                          )}
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Value
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Matched Fields
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-24">
+                            Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {(searchResult.results || []).map((item) => (
                         <tr key={item.key} className="hover:bg-gray-50">
                           <td className="px-6 py-4 text-sm font-mono text-gray-900">
                             <div className="flex items-center gap-2">
@@ -481,6 +566,15 @@ export default function Dashboard() {
                               )}
                             </div>
                           </td>
+                          {showTimestampColumn && (
+                            <td className="px-6 py-4 text-sm text-gray-700">
+                              {item.timestamp ? (
+                                <span className="font-mono text-xs">{item.timestamp}</span>
+                              ) : (
+                                <span className="text-gray-400">-</span>
+                              )}
+                            </td>
+                          )}
                           <td className="px-6 py-4 text-sm text-gray-600">
                             <div className="flex items-center gap-2">
                               <div className={`max-w-md truncate font-mono ${item.value_is_binary ? 'text-purple-600' : ''}`}>
@@ -495,7 +589,7 @@ export default function Dashboard() {
                           </td>
                           <td className="px-6 py-4 text-sm">
                             <div className="flex gap-1">
-                              {item.matched_fields.map((field) => (
+                              {(item.matched_fields || []).map((field) => (
                                 <span
                                   key={field}
                                   className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded"
@@ -518,8 +612,35 @@ export default function Dashboard() {
                     </tbody>
                   </table>
                 </div>
+
+                {/* Pagination for search results */}
+                {searchResult.has_more && (
+                  <div className="flex justify-center">
+                    <button
+                      onClick={loadMoreSearch}
+                      disabled={loadingData}
+                      className="px-6 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {loadingData ? 'Loading...' : 'Load More'}
+                    </button>
+                  </div>
+                )}
               </div>
-            ) : scanResult && scanResult.count > 0 ? (
+              ) : (
+                <div className="flex items-center justify-center h-full">
+                  <div className="text-center text-gray-500">
+                    <p className="text-lg mb-2">No search results found</p>
+                    <p className="text-sm mb-4">Try adjusting your search criteria or range</p>
+                    <button
+                      onClick={handleBackToScan}
+                      className="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      Back to Scan
+                    </button>
+                  </div>
+                </div>
+              )
+            ) : scanResult && ((scanResult.results_v2 && scanResult.results_v2.length > 0) || scanResult.count > 0) ? (
               <div className="space-y-4">
                 <div className="bg-white rounded-lg shadow overflow-hidden">
                   <table className="min-w-full divide-y divide-gray-200">
@@ -528,6 +649,11 @@ export default function Dashboard() {
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Key
                         </th>
+                        {showTimestampColumn && (
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Timestamp
+                          </th>
+                        )}
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                           Value
                         </th>
@@ -541,7 +667,8 @@ export default function Dashboard() {
                         key,
                         value,
                         key_is_binary: false,
-                        value_is_binary: false
+                        value_is_binary: false,
+                        timestamp: undefined
                       }))).map((item) => (
                         <tr key={item.key} className="hover:bg-gray-50">
                           <td className="px-6 py-4 text-sm font-mono text-gray-900">
@@ -556,6 +683,15 @@ export default function Dashboard() {
                               )}
                             </div>
                           </td>
+                          {showTimestampColumn && (
+                            <td className="px-6 py-4 text-sm text-gray-700">
+                              {item.timestamp ? (
+                                <span className="font-mono text-xs">{item.timestamp}</span>
+                              ) : (
+                                <span className="text-gray-400">-</span>
+                              )}
+                            </td>
+                          )}
                           <td className="px-6 py-4 text-sm text-gray-600">
                             <div className="flex items-center gap-2">
                               <div className={`max-w-md truncate font-mono ${item.value_is_binary ? 'text-purple-600' : ''}`}>
@@ -779,5 +915,6 @@ export default function Dashboard() {
         </div>
       )}
     </div>
+    </>
   );
 }

@@ -22,6 +22,7 @@ export interface KeyValuePair {
   value: string;
   key_is_binary?: boolean;
   value_is_binary?: boolean;
+  timestamp?: string; // Parsed timestamp if key is a timestamp
 }
 
 export interface ScanOptions {
@@ -50,6 +51,8 @@ export interface PrefixScanRequest {
 export interface SearchRequest {
   key_pattern?: string;
   value_pattern?: string;
+  start_key?: string;
+  end_key?: string;
   use_regex?: boolean;
   case_sensitive?: boolean;
   keys_only?: boolean;
@@ -62,6 +65,7 @@ export interface SearchResult {
   value: string;
   key_is_binary?: boolean;
   value_is_binary?: boolean;
+  timestamp?: string; // Parsed timestamp if key is a timestamp
   matched_fields: string[];
 }
 

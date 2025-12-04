@@ -81,15 +81,35 @@ func handleError(err error, operation string, params ...string) {
 }
 
 // parseTimestamp attempts to parse a key as a timestamp and return formatted UTC time
-// Supports various timestamp formats: Unix seconds, Unix milliseconds, Unix microseconds, Unix nanoseconds
+// Supports various timestamp formats: Unix seconds, Unix milliseconds, Unix microseconds, Unix nanoseconds, .NET ticks
 func parseTimestamp(key string) string {
+	// First, extract the numeric part if key is formatted like "123456789 (0x...)"
+	// This handles binary keys that have been formatted by FormatKey()
+	numStr := key
+	if idx := strings.Index(key, " ("); idx != -1 {
+		numStr = key[:idx]
+	}
+
 	// Try to parse as integer timestamp
-	if ts, err := strconv.ParseInt(key, 10, 64); err == nil {
+	if ts, err := strconv.ParseInt(numStr, 10, 64); err == nil {
 		var t time.Time
 
-		// Determine timestamp format based on number of digits
+		// Determine timestamp format based on number of digits and value range
 		switch {
-		case ts > 1e15: // Nanoseconds (16+ digits)
+		case ts >= 504911232000000000 && ts <= 3155378975999999999:
+			// .NET DateTime.Ticks (100-nanosecond intervals since 0001-01-01 00:00:00)
+			// Range: roughly 1986-01-01 to 9999-12-31
+			// Convert to Unix timestamp: subtract .NET epoch offset and divide by 10,000,000
+			const dotNetEpochTicks = 621355968000000000 // Ticks from 0001-01-01 to 1970-01-01
+			unixTicks := ts - dotNetEpochTicks
+			if unixTicks >= 0 {
+				unixSeconds := unixTicks / 10000000
+				unixNanos := (unixTicks % 10000000) * 100
+				t = time.Unix(unixSeconds, unixNanos)
+			} else {
+				return "" // Date before Unix epoch
+			}
+		case ts > 1e15: // Unix Nanoseconds (16+ digits, but not in .NET range)
 			t = time.Unix(0, ts)
 		case ts > 1e12: // Microseconds (13-15 digits)
 			t = time.Unix(0, ts*1000)
@@ -101,14 +121,14 @@ func parseTimestamp(key string) string {
 			return "" // Too small to be a reasonable timestamp
 		}
 
-		return t.UTC().Format("2006-01-02 15:04:05 UTC")
+		return t.UTC().Format("2006-01-02 15:04:05.000 UTC")
 	}
 
 	// Try to parse as float timestamp (seconds with fractional part)
-	if ts, err := strconv.ParseFloat(key, 64); err == nil {
+	if ts, err := strconv.ParseFloat(numStr, 64); err == nil {
 		if ts > 1e6 && ts < 1e12 { // Reasonable range for Unix timestamp in seconds
 			t := time.Unix(int64(ts), int64((ts-float64(int64(ts)))*1e9))
-			return t.UTC().Format("2006-01-02 15:04:05 UTC")
+			return t.UTC().Format("2006-01-02 15:04:05.000 UTC")
 		}
 	}
 
