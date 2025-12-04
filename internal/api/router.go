@@ -131,6 +131,17 @@ func SetupRouterWithUI(dbManager *service.DBManager) *gin.Engine {
 			databases.GET("/status", dbManagerHandler.GetStatus)
 		}
 
+		// Tools routes (no database connection required)
+		tools := v1.Group("/tools")
+		{
+			ticksHandler := handlers.NewTicksHandler()
+			ticks := tools.Group("/ticks")
+			{
+				ticks.POST("/from-datetime", ticksHandler.ConvertDateTimeToTicks)
+				ticks.POST("/to-datetime", ticksHandler.ConvertTicksToDateTime)
+			}
+		}
+
 		// Database operation routes (require active connection)
 		// Use middleware to check connection
 		connected := v1.Group("")
